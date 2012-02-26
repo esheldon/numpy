@@ -19,6 +19,8 @@ from financial import *
 import math
 from arrayterator import *
 
+import _recfile
+
 __all__ = ['emath','math']
 __all__ += type_check.__all__
 __all__ += index_tricks.__all__
