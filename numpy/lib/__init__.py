@@ -19,7 +19,7 @@ from financial import *
 import math
 from arrayterator import *
 
-import _recfile
+import recfile
 
 __all__ = ['emath','math']
 __all__ += type_check.__all__
