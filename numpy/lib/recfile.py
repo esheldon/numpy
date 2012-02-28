@@ -64,12 +64,8 @@ class Recfile(_recfile.Recfile):
     A class for reading and writing structured arrays to and from files.
 
     Both binary and text files are supported.  Any subset of the data can be
-    read without loading the whole file.  Currently, only fixed width string
-    fields are supported.  String fields can contain any characters.  For
-    binary files, structured sub-arrays can be writen and read.
-
-    For text files, quoted strings are not currently supported: the quotes will
-    be part of the result. 
+    read without loading the whole file.  See the limitations section below for
+    caveats.
 
     parameters
     ----------
@@ -114,6 +110,14 @@ class Recfile(_recfile.Recfile):
         If True, nulls in strings are not written when writing text.  This
         results in string fields that are not fixed width, so cannot be
         read back in using recfile
+
+    limitations
+    -----------
+        Currently, only fixed width string fields are supported.  String fields
+        can contain any characters, including newlines, but for text files
+        quoted strings are not currently supported: the quotes will be part of
+        the result.  For binary files, structured sub-arrays and complex can be
+        writen and read, but this is not supported yet for text files. 
 
     examples
     ---------
