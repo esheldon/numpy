@@ -3,6 +3,8 @@
  * directly, as very little error checking is performed.  Instead
  * use the numpy.lib.recfile.Recfile object, which inherits from this
  * one and does all the type and error checking.
+ *
+ * todo: for delim space, skip possibly more than one character
  */
 
 #define NPY_NO_DEPRECATED_API
@@ -20,6 +22,7 @@ struct PyRecfileObject {
     int is_ascii;
 
     char* delim;
+    int delim_is_space;
 
     // One element for each column of the file, in order.
     // must be contiguous npy_intp arrays
@@ -147,6 +150,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
     self->padnull=0;
     self->ignore_null=0;
     self->buffsize=256; // will expand for large strings
+    self->delim_is_space=0;
     if (!PyArg_ParseTuple(args, 
                           (char*)"OsiOOOOOO", 
                           &self->file_obj, 
@@ -163,6 +167,19 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
 
     if (!_set_fptr(self)) {
         return -1;
+    }
+    if (self->is_ascii && strlen(self->delim) != 1) {
+        PyErr_Format(PyExc_IOError, 
+                "delim for ascii should be 1 character, got '%s'", 
+                self->delim);
+    }
+    if (self->is_ascii) {
+        if (strncmp(" ",self->delim,1)==0) {
+            //fprintf(stderr,"found delim is space\n");
+            self->delim_is_space=1;
+        } else {
+            //fprintf(stderr,"found delim not space '%s'\n", self->delim);
+        }
     }
     self->nrows = get_nrows(nrows_obj);
     self->test=7;
@@ -340,7 +357,6 @@ write_ascii_field(struct PyRecfileObject* self, npy_intp fnum, char* ptr) {
     fsize = self->elsize[fnum];
 
     nel=self->nel[fnum];
-    //fprintf(stderr,"found nel %ld for fnum %ld\n", nel, fnum);
     for (el=0; el<nel; el++) {
         status=write_ascii_field_element(self, fnum, ptr);
         if (status != 1) {
@@ -349,7 +365,6 @@ write_ascii_field(struct PyRecfileObject* self, npy_intp fnum, char* ptr) {
         if (el < (nel-1)) {
             fprintf(self->fptr, "%s", self->delim);
         }
-        //fprintf(stderr,"incrementing fsize: %ld\n", fsize);
         ptr += fsize;
     }
     return status;
@@ -374,18 +389,17 @@ write_ascii_row(struct PyRecfileObject* self, char* ptr) {
         }
         ptr += self->elsize[fnum]*self->nel[fnum];
     }
-    fprintf(self->fptr, "\n");
     return status;
 }
 
 static PyObject*
-PyRecfileObject_write(struct PyRecfileObject* self, PyObject* args) 
+PyRecfileObject_write_ascii(struct PyRecfileObject* self, PyObject* args) 
 {
     PyObject* array=NULL;
     char* ptr=NULL;
     npy_intp nrows=0, row=0;
     if (!PyArg_ParseTuple(args, (char*)"O", &array)) {
-        return -1;
+        return NULL;
     }
 
     if (!self->is_ascii) {
@@ -400,12 +414,179 @@ PyRecfileObject_write(struct PyRecfileObject* self, PyObject* args)
             PyErr_Format(PyExc_IOError,"failed to write row %ld", row);
             return NULL;
         }
+        fprintf(self->fptr, "\n");
         ptr += self->rowsize;
     }
     Py_RETURN_NONE;
 }
 
 
+
+
+static int
+read_bytes(struct PyRecfileObject* self, npy_intp nbytes, char* buffer) 
+{
+    int status=1;
+    if (1 != fread(buffer, nbytes, 1, self->fptr)) {
+        PyErr_Format(PyExc_IOError, "failed to read field %ld bytes", 
+                     nbytes);
+        status=0;
+    }
+    return status;
+}
+
+static int
+scan_number(struct PyRecfileObject* self, npy_intp fnum, char* buffer) {
+    int status=1;
+    int ret=0;
+    char* fmt=NULL;
+    fmt = PyArray_GETPTR1((PyArrayObject*)self->scan_formats_obj, fnum);
+
+    ret = fscanf(self->fptr, fmt, buffer);
+    if (ret != 1) {
+        PyErr_Format(PyExc_IOError,
+                "error reading number field %ld: fmt: '%s' ret: %d\n", 
+                fnum, fmt, ret);
+        status=0;
+    }
+    return status;
+}
+
+static int
+read_ascii_field_element(struct PyRecfileObject* self,
+                         npy_intp fnum,
+                         char* buffer) 
+{
+    int status=1;
+    npy_intp typenum=0;
+    typenum=self->typenums[fnum];
+    if (NPY_STRING == typenum) {
+        status = read_bytes(self, self->elsize[fnum], buffer);
+    } else {
+        status = scan_number(self, fnum, buffer);
+    }
+    return status;
+}
+
+/*
+ * skip=0 means don't increment the buffer
+ */
+static int
+read_ascii_field(
+        struct PyRecfileObject* self, npy_intp fnum, char* buffer, int skip) 
+{
+    int status=1, isstring=0;
+    npy_intp nel=0, el=0, fsize=0, typenum=0;
+
+    fsize = self->elsize[fnum];
+    typenum=self->typenums[fnum];
+
+    nel=self->nel[fnum];
+
+    isstring = (NPY_STRING == typenum) ? 1 : 0;
+    for (el=0; el<nel; el++) {
+        status=read_ascii_field_element(self, fnum, buffer);
+        if (status != 1) {
+            // exception set downstream, this is just some info
+            fprintf(stderr, "failed to read field %ld el %ld as type %ld", 
+                         fnum, el, typenum);
+            break;
+        }
+        // if whitespace or reading a string, we'll have to
+        // read the delimiter
+        if (el < (nel-1)) {
+            if (isstring || self->delim_is_space) {
+                int c;
+                c=fgetc(self->fptr);
+                //fprintf(stderr,"fnum: %ld isstring: %d el: %ld read character: '%c'\n", fnum, isstring, el, c);
+            }
+        }
+        if (!skip) {
+            // if skipping, just re-use buffer
+            buffer += fsize;
+        }
+    }
+    return status;
+}
+
+
+static int
+read_ascii_row(struct PyRecfileObject* self, char* ptr) {
+    int status=1, isstring=0, skip=0;
+    npy_intp fnum=0, typenum=0;
+    int c=0;
+    for (fnum=0; fnum<self->nfields; fnum++) {
+        status=read_ascii_field(self, fnum, ptr, skip);
+        if (status != 1) {
+            //PyErr_Format(PyExc_IOError, "failed to read field %ld", fnum);
+            break;
+        }
+        // read delimiter unless on last field
+        typenum=self->typenums[fnum];
+        isstring = (NPY_STRING == typenum) ? 1 : 0;
+        //fprintf(stderr,"fnum: %ld isstring: %d\n", fnum, isstring);
+        if (fnum < (self->nfields-1)) {
+            if (isstring || self->delim_is_space) {
+                c=fgetc(self->fptr);
+                //fprintf(stderr,"fnum: %ld read character: '%c'\n", fnum, c);
+            }
+        }
+        ptr += self->elsize[fnum]*self->nel[fnum];
+    }
+
+    return status;
+}
+
+static int
+skip_ascii_rows(struct PyRecfileObject* self, npy_intp nrows) {
+    int status=1;
+    return status;
+}
+
+static PyObject* 
+read_ascii_slice(struct PyRecfileObject* self,
+                 void* ptr, npy_intp start, npy_intp stop, npy_intp step) {
+
+    int c=0;
+    npy_intp current_row=0, row=0;
+    if (start > 0) {
+        if (!skip_ascii_rows(self, start) ) {
+            PyErr_Format(PyExc_IOError, 
+                    "failed to skip %ld rows",start);
+            return NULL;
+        }
+    }
+
+    current_row=start;
+    row=start;
+    while (row < stop) {
+        if (row > current_row) {
+            if (!skip_ascii_rows(self, row-current_row)) {
+                PyErr_Format(PyExc_IOError, 
+                             "failed to skip rows %ld-%ld",current_row,row-1);
+                return NULL;
+            }
+            current_row=row;
+        }
+
+        //fprintf(stderr,"reading ascii row: %ld\n", row);
+        if (!read_ascii_row(self, ptr)) {
+            // TODO use err string
+            //PyErr_Format(PyExc_IOError, "failed to read row %ld", row);
+            return NULL;
+        }
+        //fprintf(stderr,"success\n");
+        // read newline
+        c=fgetc(self->fptr);
+        //fprintf(stderr,"read character: '%c'\n", c);
+
+        ptr += self->rowsize;
+        current_row += 1;
+        row += step;
+    }
+    Py_RETURN_NONE;
+
+}
 
 static int skip_binary_bytes(FILE* fptr, npy_intp nbytes) {
     if (nbytes > 0) {
@@ -457,104 +638,6 @@ read_binary_slice(struct PyRecfileObject* self,
     Py_RETURN_NONE;
 
 }
-
-static int
-read_bytes(struct PyRecfileObject* self, npy_intp nbytes, char* buffer) 
-{
-    int status=1;
-    if (1 != fread(buffer, nbytes, 1, self->fptr)) {
-        status=1;
-    }
-    return status;
-}
-
-static int
-scan_val(struct PyRecfileObject* self, npy_intp fnum, char* buffer) {
-    int status=1;
-    int ret=0;
-    char* fmt=NULL;
-    fmt = PyArray_GETPTR1((PyArrayObject*)self->scan_formats_obj, fnum);
-
-    ret = fscanf(self->fptr, fmt, buffer);
-    if (ret != 1) {
-        status=0;
-    }
-    return status;
-}
-
-static int
-read_ascii_field(struct PyRecfileObject* self,
-                 npy_intp fnum,
-                 char* buffer) 
-{
-    int status=1;
-    npy_intp typenum=0;
-
-    typenum=self->typenums[fnum];
-    if (NPY_STRING == typenum) {
-        status = read_bytes(self, self->elsize[fnum], buffer);
-    } else {
-        status = scan_val(self, fnum, buffer);
-    }
-    if (status != 1) {
-        PyErr_Format(PyExc_IOError, "failed to read field %ld", fnum);
-    }
-    return status;
-}
-
-static int
-read_ascii_row(struct PyRecfileObject* self, char* buffer) {
-    int status=1;
-    return status;
-}
-
-static int
-skip_ascii_rows(struct PyRecfileObject* self, npy_intp nrows) {
-    int status=1;
-    return status;
-}
-
-static PyObject* 
-read_ascii_slice(struct PyRecfileObject* self,
-                 void* ptr, npy_intp start, npy_intp stop, npy_intp step) {
-
-    npy_intp current_row=0, row=0;
-    if (start > 0) {
-        if (!skip_ascii_rows(self, start) ) {
-            PyErr_Format(PyExc_IOError, 
-                    "failed to skip %ld rows",start);
-            return NULL;
-        }
-    }
-
-    current_row=start;
-    row=start;
-    while (row < stop) {
-        if (row > current_row) {
-            if (!skip_ascii_rows(self, row-current_row)) {
-                PyErr_Format(PyExc_IOError, 
-                             "failed to skip rows %ld-%ld",current_row,row-1);
-                return NULL;
-            }
-            current_row=row;
-        }
-
-        fprintf(stderr,"reading ascii row: %ld\n", row);
-        if (!read_ascii_row(self, ptr)) {
-            // TODO use err string
-            PyErr_Format(PyExc_IOError, "failed to read row %ld", row);
-            return NULL;
-        }
-        fprintf(stderr,"success\n");
-
-        ptr += self->rowsize;
-        current_row += 1;
-        row += step;
-    }
-    Py_RETURN_NONE;
-
-}
-
 
 
 /* 
@@ -711,7 +794,7 @@ PyRecfile_get_formats(PyObject* self, PyObject *args) {
 
 static PyMethodDef PyRecfileObject_methods[] = {
     {"test",             (PyCFunction)PyRecfileObject_test,             METH_VARARGS,  "test\n\nReturn test value."},
-    {"write",             (PyCFunction)PyRecfileObject_write,             METH_VARARGS,  "Write the input array to the file\n"},
+    {"write_ascii",             (PyCFunction)PyRecfileObject_write_ascii,             METH_VARARGS,  "Write the input array to ascii\n"},
     {"read_slice",             (PyCFunction)PyRecfileObject_read_slice,             METH_VARARGS,  "read a slice into input array. Use for step != 1, otherwise can use numpy.fromfile\n"},
     {NULL}  /* Sentinel */
 };
