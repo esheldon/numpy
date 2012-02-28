@@ -548,6 +548,11 @@ class Recfile(_recfile.Recfile):
             dout.append(d)
         self.dtype = numpy.dtype(dout)
 
+    def __enter__(self):
+        return self
+    def __exit__(self, exception_type, exception_value, traceback):
+        self.close()
+
     def __repr__(self):
         return _make_repr(self.dtype, self.nrows, self.ncols)
 
