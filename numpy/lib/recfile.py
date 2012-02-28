@@ -1,3 +1,46 @@
+"""
+numpy.recfile
+
+This module defines the Recfile class for reading and writing structured arrays
+to and from files.
+
+See docs for numpy.recfile.Recfile for more details.
+
+    examples
+    ---------
+        # read from binary file
+        dtype=[('id','i4'),('x','f8'),('y','f8')]
+        rec=numpy.recfile.Recfile(fname,dtype=dtype)
+
+        # read all data using either slice or method notation
+        data=rec[:]
+        data=rec.read()
+
+        # read row slices
+        data=rec[8:55:3]
+
+        # read subset of columns and possibly rows
+        # can use either slice or method notation
+        data=rec['x'][:]
+        data=rec[col_list][:]
+        data=rec[col_list][row_list]
+        data=rec.read(columns=col_list, rows=row_list)
+
+        # for ascii files, just send the delimiter string
+        # all the above calls will also work
+        rec=numpy.recfile.Recfile(fname,dtype=dtype,delim=',')
+
+        # save time for ascii files by sending row count
+        rec=numpy.recfile.Recfile(fname,dtype=dtype,delim=',',nrows=10000)
+
+        # write some data
+        dtype=[('id','i4'),('x','f8'),('y','f8')]
+        rec=numpy.recfile.Recfile(fname,mode='w',dtype=dtype,delim=',')
+        rec.write(data)
+
+        # append some data
+        rec.write(more_data)
+"""
 import os
 import sys
 from sys import stderr
@@ -9,6 +52,13 @@ import _recfile
 class Recfile(_recfile.Recfile):
     """
     A class for reading and writing structured arrays to and from files.
+
+    Both binary and ascii files are supported.  Currently, only fixed width
+    string fields are supported.  String fields can contain any characters, but
+    note currently quoted strings are not supported: the quotes will be part of
+    the result. For binary files, sub-structure columns are supported.
+
+    You can read any subset of the data without loading the whole file.
 
     parameters
     ----------
@@ -37,6 +87,42 @@ class Recfile(_recfile.Recfile):
         If true, strings may contain newlines.  In this case the full
         ascii reading code is used to count rows instead of a simple
         newline count.  This is generally much slower.
+
+    examples
+    ---------
+        # read from binary file
+        dtype=[('id','i4'),('x','f8'),('y','f8')]
+        rec=numpy.recfile.Recfile(fname,dtype=dtype)
+
+        # read all data using either slice or method notation
+        data=rec[:]
+        data=rec.read()
+
+        # read row slices
+        data=rec[8:55:3]
+
+        # read subset of columns and possibly rows
+        # can use either slice or method notation
+        data=rec['x'][:]
+        data=rec[col_list][:]
+        data=rec[col_list][row_list]
+        data=rec.read(columns=col_list, rows=row_list)
+
+        # for ascii files, just send the delimiter string
+        # all the above calls will also work
+        rec=numpy.recfile.Recfile(fname,dtype=dtype,delim=',')
+
+        # save time for ascii files by sending row count
+        rec=numpy.recfile.Recfile(fname,dtype=dtype,delim=',',nrows=10000)
+
+        # write some data
+        dtype=[('id','i4'),('x','f8'),('y','f8')]
+        rec=numpy.recfile.Recfile(fname,mode='w',dtype=dtype,delim=',')
+        rec.write(data)
+
+        # append some data
+        rec.write(more_data)
+
     """
     def __init__(self, fobj, mode='r', dtype=None, **keys):
 
