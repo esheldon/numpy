@@ -56,7 +56,8 @@ from sys import stderr
 import numpy
 import unittest
 import tempfile
-import _recfile
+#import _recfile
+from . import _recfile
 
 class Recfile(_recfile.Recfile):
     """
@@ -357,7 +358,6 @@ class Recfile(_recfile.Recfile):
                             numpy.array([slc.stop], dtype='intp'),
                             numpy.array([slc.step], dtype='intp'))
         except:
-            #print result
             raise
         return result
 
@@ -627,12 +627,6 @@ class Recfile(_recfile.Recfile):
                     raise ValueError("print type not yet "
                                      "supported: %s" % dt.base.str)
                 self.print_formats[i] = self.allprintf[typenum]
-        """
-        print 'sizes:',self.elsize
-        print 'nel:',self.nel
-        print 'scan formats:',self.scan_formats
-        print 'print formats:',self.print_formats
-        """
 
     def _set_possible_formats(self):
         # first set up all possible scan formats
@@ -650,10 +644,6 @@ class Recfile(_recfile.Recfile):
                 for d in allscanf:
                     allscanf[d] += " "+self.delim
 
-        """
-        print 'all scanf:',allscanf
-        print 'all printf:',allprintf
-        """
         self.allscanf=allscanf
         self.allprintf=allprintf
 
@@ -1158,9 +1148,6 @@ class TestReadWrite(unittest.TestCase):
 
         res=numpy.where(arr1 != arr2)
         for i,w in enumerate(res):
-            if w.size > 0:
-                print arr1
-                print arr2
             self.assertEqual(w.size,0,"testing array '%s' dim %d are equal" % (name,i))
 
     def compare_rec(self, rec1, rec2, name):
@@ -1171,12 +1158,6 @@ class TestReadWrite(unittest.TestCase):
 
             res=numpy.where(rec1[f] != rec2[f])
             for w in res:
-                """
-                if w.size > 0:
-                    if f == 'Sscalar':
-                        print rec1[f]
-                        print rec2[f]
-                """
                 self.assertEqual(w.size,0,
                                  "testing '%s'\n\tcolumn %s" % (name,f))
 
