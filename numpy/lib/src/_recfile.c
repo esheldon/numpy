@@ -143,7 +143,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
     self->buffsize=256; // will expand for large strings
     self->delim_is_space=0;
     if (!PyArg_ParseTuple(args, 
-                          (char*)"OsiOOOOOO", 
+                          (char*)"OsiOOOOOOii", 
                           &self->file_obj, 
                           &self->delim, 
                           &self->is_ascii,
@@ -152,7 +152,9 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
                           &self->nel_obj,
                           &self->offset_obj,
                           &self->scan_formats_obj,
-                          &self->print_formats_obj)) {
+                          &self->print_formats_obj,
+                          &self->padnull,
+                          &self->ignore_null)) {
                           //&nrows_obj)) {
         return -1;
     }

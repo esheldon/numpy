@@ -108,6 +108,13 @@ class Recfile(_recfile.Recfile):
         of a simple newline count.  Because the text is fully processed twice,
         this can double the time to read files.
 
+    padnull: bool
+        If True, nulls in strings are replaced with spaces when writing text
+    ignorenull: bool
+        If True, nulls in strings are not written when writing text.  This
+        results in string fields that are not fixed width, so cannot be
+        read back in using recfile
+
     examples
     ---------
         # read from binary file
@@ -184,6 +191,8 @@ class Recfile(_recfile.Recfile):
         # seek to this offset for reads
         self.file_offset=keys.get('offset',None)
         self.string_newlines=keys.get('string_newlines',False)
+        self.padnull = 1 if self.padnull else 0
+        self.ignorenull = 1 if self.ignorenull else 0
 
         if self.file_offset is None:
             self.file_offset = self.fobj.tell()
@@ -214,7 +223,9 @@ class Recfile(_recfile.Recfile):
                                       self.nel,
                                       self.offset,
                                       self.scan_formats,
-                                      self.print_formats)
+                                      self.print_formats,
+                                      self.padnull,
+                                      self.ignorenull)
         self._set_beginning_nrows(**keys)
 
     def write(self, data, **keys):
