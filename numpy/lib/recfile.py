@@ -2,15 +2,16 @@
 numpy.recfile
 
 This module defines the Recfile class for reading and writing structured arrays
-to and from files.
+to and from files.  Files can be either binary or text files.
 
 See docs for numpy.recfile.Recfile for more details.
 
     examples
     ---------
         # read from binary file
-        dtype=[('id','i4'),('x','f8'),('y','f8')]
+        dtype=[('id','i4'),('x','f8'),('y','f8'),('arr','f4',(2,2))]
         rec=numpy.recfile.Recfile(fname,dtype=dtype)
+
 
         # read all data using either slice or method notation
         data=rec[:]
@@ -26,20 +27,28 @@ See docs for numpy.recfile.Recfile for more details.
         data=rec[col_list][row_list]
         data=rec.read(columns=col_list, rows=row_list)
 
-        # for ascii files, just send the delimiter string
+        # for text files, just send the delimiter string
         # all the above calls will also work
         rec=numpy.recfile.Recfile(fname,dtype=dtype,delim=',')
 
-        # save time for ascii files by sending row count
+        # save time for text files by sending row count
         rec=numpy.recfile.Recfile(fname,dtype=dtype,delim=',',nrows=10000)
 
         # write some data
-        dtype=[('id','i4'),('x','f8'),('y','f8')]
         rec=numpy.recfile.Recfile(fname,mode='w',dtype=dtype,delim=',')
         rec.write(data)
 
         # append some data
         rec.write(more_data)
+
+        # print metadata about the file
+        print rec
+        Recfile  nrows: 345472 ncols: 6 mode: 'w'
+
+          id                 <i4
+          x                  <f8
+          y                  <f8
+          arr                <f4  array[2,2]
 """
 import os
 import sys
@@ -53,12 +62,13 @@ class Recfile(_recfile.Recfile):
     """
     A class for reading and writing structured arrays to and from files.
 
-    Both binary and ascii files are supported.  Currently, only fixed width
-    string fields are supported.  String fields can contain any characters, but
-    note currently quoted strings are not supported: the quotes will be part of
-    the result. For binary files, sub-structure columns are supported.
+    Both binary and text files are supported.  Any subset of the data can be
+    read without loading the whole file.  Currently, only fixed width string
+    fields are supported.  String fields can contain any characters.  For
+    binary files, structured sub-arrays can be writen and read.
 
-    You can read any subset of the data without loading the whole file.
+    For text files, quoted strings are not currently supported: the quotes will
+    be part of the result. 
 
     parameters
     ----------
@@ -69,30 +79,40 @@ class Recfile(_recfile.Recfile):
     dtype:
         A numpy dtype or descriptor describing each line of the file.  The
         dtype must contain fields. This is a required parameter; it is a
-        keyword for clarity. 
-    nrows: int
+        keyword only for clarity. 
+
+        Note for text files the dtype will be converted to native byte
+        ordering.  Any data written to the file must also be in the native byte
+        ordering.
+    nrows: int, optional
         Number of rows in the file.  If not entered, the rows will be counted
         from the file itself. This is a simple calculation for binary files,
-        but can be slow for ascii files.
+        but can be slow for text files.
     delim: string, optional
-        The delimiter for ascii files.  If None or "" the file is
+        The delimiter for text files.  If None or "" the file is
         assumed to be binary.  Should be a single character.
-    skipheader: int
+    skipheader: int, optional
         Skip this many lines in the header.
-    offset: int
+    offset: int, optional
         Move to this offset in the file.  Reads will all be relative to this
         location. If not sent, it is taken from the current positioin in the
         input file object or 0 if a filename was entered.
-    string_newlines: bool
-        If true, strings may contain newlines.  In this case the full
-        ascii reading code is used to count rows instead of a simple
-        newline count.  This is generally much slower.
+
+    string_newlines: bool, optional
+        If true, strings in text files may contain newlines.  This is only
+        relevant for text files when the nrows= keyword is not sent, because
+        the number of lines must be counted.  
+        
+        In this case the full text reading code is used to count rows instead
+        of a simple newline count.  Because the text is fully processed twice,
+        this can double the time to read files.
 
     examples
     ---------
         # read from binary file
-        dtype=[('id','i4'),('x','f8'),('y','f8')]
+        dtype=[('id','i4'),('x','f8'),('y','f8'),('arr','f4',(2,2))]
         rec=numpy.recfile.Recfile(fname,dtype=dtype)
+
 
         # read all data using either slice or method notation
         data=rec[:]
@@ -108,21 +128,28 @@ class Recfile(_recfile.Recfile):
         data=rec[col_list][row_list]
         data=rec.read(columns=col_list, rows=row_list)
 
-        # for ascii files, just send the delimiter string
+        # for text files, just send the delimiter string
         # all the above calls will also work
         rec=numpy.recfile.Recfile(fname,dtype=dtype,delim=',')
 
-        # save time for ascii files by sending row count
+        # save time for text files by sending row count
         rec=numpy.recfile.Recfile(fname,dtype=dtype,delim=',',nrows=10000)
 
         # write some data
-        dtype=[('id','i4'),('x','f8'),('y','f8')]
         rec=numpy.recfile.Recfile(fname,mode='w',dtype=dtype,delim=',')
         rec.write(data)
 
         # append some data
         rec.write(more_data)
 
+        # print metadata about the file
+        print rec
+        Recfile  nrows: 345472 ncols: 6 mode: 'w'
+
+          id                 <i4
+          x                  <f8
+          y                  <f8
+          arr                <f4  array[2,2]
     """
     def __init__(self, fobj, mode='r', dtype=None, **keys):
 
@@ -190,6 +217,19 @@ class Recfile(_recfile.Recfile):
         self._set_beginning_nrows(**keys)
 
     def write(self, data, **keys):
+        """
+        Write the input structured array to the file
+
+        parameters
+        ----------
+        data: structured array
+            A numpy array with fields defined.  The dtype must match that of
+            the dtype parameter passed when constructing the Recfile object.
+
+            Note that for text files, the dtype passed on construction was
+            converted to native byte ordering, and this array must also have
+            native byte ordering.
+        """
         if self.fobj.closed:
             raise ValueError("file is not open")
         if self.fobj.mode[0] != 'w' and '+' not in self.fobj.mode:
@@ -212,7 +252,20 @@ class Recfile(_recfile.Recfile):
         super(Recfile,self).set_nrows(nrows_send)
 
     def read(self, rows=None, columns=None, **keys):
+        """
+        Read data from the file.
 
+        A subset of the data can be read by sending rows= or columns=
+
+        parameters
+        ----------
+        rows: optional
+            A number or sequence/array of numbers representing a subset of the
+            rows to read.
+        columns: optional
+            A string or sequence/array of strings representing a subset of the
+            columns to read.
+        """
         if self.fobj.closed:
             raise ValueError("file is not open")
         if self.fobj.mode[0] != 'r' and '+' not in self.fobj.mode:
@@ -229,7 +282,8 @@ class Recfile(_recfile.Recfile):
 
     def close(self):
         """
-        Close any open file object.
+        Close the file.  If a file object was sent on construction, it is not
+        closed.
         """
         if not self.fobj_was_input:
             self.fobj.close()
@@ -659,9 +713,9 @@ class Recfile(_recfile.Recfile):
 
     def _nativize_dtype(self):
         """
-        make sure the dtype is native for ascii reading
+        make sure the dtype is native for text reading
 
-        This will prevent writing ascii from arrays of a different byte order
+        This will prevent writing text from arrays of a different byte order
         than native: user must change byte order
         """
         descr=self.dtype.descr
@@ -680,12 +734,12 @@ class Recfile(_recfile.Recfile):
         self.close()
 
     def __repr__(self):
-        return _make_repr(self.dtype, self.nrows, self.ncols)
+        return _make_repr(self.dtype, self.nrows, self.ncols, self.fobj.mode)
 
-def _make_repr(dtype, nrows, ncols, title='Recfile'):
-    topformat=title+"  nrows: %s ncols: %s\n"
+def _make_repr(dtype, nrows, ncols, mode, title='Recfile'):
+    topformat=title+"  nrows: %s ncols: %s mode: '%s'\n"
     lines=[]
-    line=topformat % (nrows, ncols)
+    line=topformat % (nrows, ncols, mode)
     lines.append(line)
 
     flines=_get_field_info(dtype, indent='  ')
@@ -805,7 +859,9 @@ class RecfileColumnSubset:
         for i in xrange(cols2read.size):
             descr.append(self.recfile.dtype.descr[i])
         dtype=numpy.dtype(descr)
-        return _make_repr(dtype, self.recfile.nrows, cols2read.size, title='RecfileColumnSubset')
+        return _make_repr(dtype, self.recfile.nrows, cols2read.size, 
+                          self.recfile.fobj.mode,
+                          title='RecfileColumnSubset')
 
 
 
