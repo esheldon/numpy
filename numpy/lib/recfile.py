@@ -23,7 +23,7 @@ See docs for numpy.recfile.Recfile for more details.
         # read subset of columns and possibly rows
         # can use either slice or method notation
         data=rec['x'][:]
-        data=rec[col_list][:]
+        data=rec['x','y'][:]
         data=rec[col_list][row_list]
         data=rec.read(columns=col_list, rows=row_list)
 
@@ -136,7 +136,7 @@ class Recfile(_recfile.Recfile):
         # read subset of columns and possibly rows
         # can use either slice or method notation
         data=rec['x'][:]
-        data=rec[col_list][:]
+        data=rec['x','y'][:]
         data=rec[col_list][row_list]
         data=rec.read(columns=col_list, rows=row_list)
 
@@ -861,7 +861,7 @@ class RecfileColumnSubset:
     def __repr__(self):
         cols2read = self.recfile._get_cols2read(self.columns)
         descr=[]
-        for i in xrange(cols2read.size):
+        for i in cols2read:
             descr.append(self.recfile.dtype.descr[i])
         dtype=numpy.dtype(descr)
         return _make_repr(dtype, self.recfile.nrows, cols2read.size, 
