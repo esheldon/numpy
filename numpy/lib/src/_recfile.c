@@ -208,7 +208,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
 static PyObject *
 PyRecfileObject_repr(struct PyRecfileObject* self) {
     return PyString_FromFormat(
-            "Recfile\n\tdelim: %s\n\tnrows: %ld\n\tbuffsize: %ld\n", 
+            "Recfile\n\tdelim: '%s'\n\tnrows: %ld\n\tbuffsize: %ld\n", 
             self->delim, self->nrows, self->buffsize);
 }
 
