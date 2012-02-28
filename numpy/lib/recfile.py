@@ -56,8 +56,7 @@ from sys import stderr
 import numpy
 import unittest
 import tempfile
-#import _recfile
-from . import _recfile
+import _recfile
 
 class Recfile(_recfile.Recfile):
     """
