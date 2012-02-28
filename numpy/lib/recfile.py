@@ -548,6 +548,73 @@ class Recfile(_recfile.Recfile):
             dout.append(d)
         self.dtype = numpy.dtype(dout)
 
+    def __repr__(self):
+        return _make_repr(self.dtype, self.nrows, self.ncols)
+
+def _make_repr(dtype, nrows, ncols, title='Recfile'):
+    topformat=title+"  nrows: %s ncols: %s\n"
+    lines=[]
+    line=topformat % (nrows, ncols)
+    lines.append(line)
+
+    flines=_get_field_info(dtype, indent='  ')
+    lines += flines
+           
+    lines='\n'.join(lines)
+
+    return lines
+
+
+def _get_field_info(dtype, indent='  '):
+
+    names=dtype.names
+
+    lines=[]
+
+    nname = 15
+    ntype = 6
+
+    # this one is prettier since lines wrap after long names
+    format  = indent + "%-" + str(nname) + "s %" + str(ntype) + "s  %s"
+    long_format = indent + "%-" + str(nname) + "s\n %" + str(len(indent)+nname+ntype) + "s  %s"
+
+    max_pretty_slen = 25
+    
+    for i in range(len(names)):
+
+        hasfields=False
+
+        n=names[i]
+
+        type = dtype.fields[n][0]
+
+        shape_str = ','.join( str(s) for s in type.shape)
+
+        if type.names is not None:
+            ptype = 'rec'
+            d=''
+            hasfields=True
+        else:
+            if shape_str != '':
+                ptype = type.base.str
+                d = 'array[%s]' % shape_str
+            else:
+                ptype = type.str
+                d=''
+        
+        if len(n) > 15:
+            l = long_format % (n,ptype,d)
+        else:
+            l = format % (n,ptype,d)
+        lines.append(l)
+
+        if hasfields:
+            recurse_indent = indent + ' '*4
+            morelines = _get_field_info(type, indent=recurse_indent)
+            lines += morelines
+
+    return lines
+
 
 class RecfileColumnSubset:
     """
@@ -602,9 +669,12 @@ class RecfileColumnSubset:
 
 
     def __repr__(self):
-        pass
-
-
+        cols2read = self.recfile._get_cols2read(self.columns)
+        descr=[]
+        for i in xrange(cols2read.size):
+            descr.append(self.recfile.dtype.descr[i])
+        dtype=numpy.dtype(descr)
+        return _make_repr(dtype, self.recfile.nrows, cols2read.size, title='RecfileColumnSubset')
 
 
 
