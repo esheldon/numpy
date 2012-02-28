@@ -30,6 +30,7 @@ struct PyRecfileObject {
     PyObject* typenums_obj;
     PyObject* elsize_obj;
     PyObject* nel_obj;
+    PyObject* offset_obj;
     PyObject* scan_formats_obj;
     PyObject* print_formats_obj;
 
@@ -37,6 +38,7 @@ struct PyRecfileObject {
     npy_intp* typenums;
     npy_intp* elsize;
     npy_intp* nel;
+    npy_intp* offset;
 
     // rowsize in bytes for binary
     npy_intp rowsize;
@@ -143,6 +145,8 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
     self->elsize=NULL;
     self->rowsize=0;
     self->nel_obj=NULL;
+    self->offset_obj=NULL;
+    self->offset=NULL;
     self->nel=NULL;
     self->nrows=0;
     self->ncols=0;
@@ -152,13 +156,14 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
     self->buffsize=256; // will expand for large strings
     self->delim_is_space=0;
     if (!PyArg_ParseTuple(args, 
-                          (char*)"OsiOOOOOO", 
+                          (char*)"OsiOOOOOOO", 
                           &self->file_obj, 
                           &self->delim, 
                           &self->is_ascii,
                           &self->typenums_obj,
                           &self->elsize_obj,
                           &self->nel_obj,
+                          &self->offset_obj,
                           &self->scan_formats_obj,
                           &self->print_formats_obj,
                           &nrows_obj)) {
@@ -185,6 +190,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
     self->typenums=(npy_intp*) PyArray_DATA((PyArrayObject*)self->typenums_obj);
     self->elsize=(npy_intp*) PyArray_DATA((PyArrayObject*)self->elsize_obj);
     self->nel=(npy_intp*) PyArray_DATA((PyArrayObject*)self->nel_obj);
+    self->offset=(npy_intp*) PyArray_DATA((PyArrayObject*)self->offset_obj);
 
     if (!set_rowsize_and_buffer(self)) {
         return -1;
@@ -192,6 +198,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
 
     Py_XINCREF(self->elsize_obj);
     Py_XINCREF(self->nel_obj);
+    Py_XINCREF(self->offset_obj);
     Py_XINCREF(self->scan_formats_obj);
     Py_XINCREF(self->print_formats_obj);
 
@@ -583,48 +590,29 @@ read_ascii_slice(struct PyRecfileObject* self,
 
 }
 
-static int skip_binary_bytes(FILE* fptr, npy_intp nbytes) {
-    if (nbytes > 0) {
-        return fseeko(fptr, (off_t) nbytes, SEEK_CUR); 
-    }
-    return 0;
-}
-
 static PyObject* 
 read_binary_slice(struct PyRecfileObject* self,
                   void* ptr, npy_intp start, npy_intp stop, npy_intp step) {
 
     npy_intp current_row=0, row=0;
-    npy_intp bytes=0;
+    off_t bytes=0;
 
-    if (start > 0) {
-        if (0 != skip_binary_bytes(self->fptr, start*self->rowsize) ) {
-            // TODO use err string
-            PyErr_SetString(PyExc_IOError, "failed to seek");
-            return NULL;
-        }
-    }
-
-    current_row=start;
+    current_row=0;
     row=start;
     while (row < stop) {
         if (row > current_row) {
             bytes = (row-current_row)*self->rowsize;
-            if (0 != skip_binary_bytes(self->fptr, bytes)) {
-                // TODO use err string
+            if (0 != fseeko(self->fptr, bytes , SEEK_CUR)) {
                 PyErr_SetString(PyExc_IOError, "failed to seek");
                 return NULL;
             }
             current_row=row;
         }
 
-        //fprintf(stderr,"reading row: %ld\n", row);
         if (1 != fread(ptr, (size_t)self->rowsize, 1, self->fptr)) {
-            // TODO use err string
             PyErr_Format(PyExc_IOError, "failed to read row %ld", row);
             return NULL;
         }
-        //fprintf(stderr,"success\n");
 
         ptr += self->rowsize;
         current_row += 1;
@@ -691,6 +679,7 @@ read_ascii_cols(struct PyRecfileObject* self,
     int status=1;
     npy_intp icol=0, current_col=0, col=0;
     npy_intp tcol=0;
+    off_t bytes=0;
 
     for (icol=0; icol<ncols; icol++) {
 
@@ -741,6 +730,7 @@ read_ascii_subset(struct PyRecfileObject* self,
                   npy_intp* cols, npy_intp ncols,
                   npy_intp* rows, npy_intp nrows) 
 {
+    int status=1;
     npy_intp current_row=0, row=0, irow=0;
     int skip=0;
 
@@ -760,13 +750,12 @@ read_ascii_subset(struct PyRecfileObject* self,
         }
 
         if (ncols < self->ncols) {
-            if (!read_ascii_cols(self, ptr, cols, ncols)) {
-                return NULL;
-            }
+            status=read_ascii_cols(self, ptr, cols, ncols);
         } else {
-            if (!read_ascii_row(self, ptr, skip)) {
-                return NULL;
-            }
+            status=read_ascii_row(self, ptr, skip);
+        }
+        if (status!=1) {
+            return NULL;
         }
         // newline
         fgetc(self->fptr);
@@ -779,6 +768,56 @@ read_ascii_subset(struct PyRecfileObject* self,
     Py_RETURN_NONE;
 }
 
+static int
+read_binary_cols(struct PyRecfileObject* self, 
+                char* ptr, 
+                npy_intp* cols, 
+                npy_intp ncols)
+{
+    npy_intp icol=0, current_col=0, col=0;
+    npy_intp tcol=0;
+    off_t bytes=0;
+
+    for (icol=0; icol<ncols; icol++) {
+
+        if (ncols < self->ncols) {
+            col=cols[icol];
+        } else {
+            col=icol;
+        }
+
+        if (col > current_col) {
+            bytes = self->offset[col]-self->offset[current_col];
+            if (0 != fseeko(self->fptr, bytes , SEEK_CUR)) {
+                PyErr_SetString(PyExc_IOError, "failed to seek");
+                return 0;
+            }
+            current_col=col;
+        }
+
+        bytes = self->elsize[col]*self->nel[col];
+        if (1 != fread(ptr, bytes, 1, self->fptr)) {
+            PyErr_Format(PyExc_IOError, "failed to read col %ld", col);
+            return 0;
+        }
+
+        ptr += self->elsize[col]*self->nel[col];
+        current_col++;
+    }
+
+    // skip remaining columns if necessary
+    if (col < (self->ncols-1)) {
+        bytes = self->rowsize-self->offset[col+1];
+        if (0 != fseeko(self->fptr, bytes , SEEK_CUR)) {
+            PyErr_SetString(PyExc_IOError, "failed to seek");
+            return 0;
+        }
+    }
+
+    return 1;
+
+}
+
 
 static PyObject* 
 read_binary_subset(struct PyRecfileObject* self,
@@ -787,6 +826,41 @@ read_binary_subset(struct PyRecfileObject* self,
                    npy_intp* cols, npy_intp ncols,
                    npy_intp* rows, npy_intp nrows) 
 {
+    npy_intp current_row=0, row=0, irow=0;
+    off_t bytes=0;
+
+    for (irow=0; irow<nrows; irow++) {
+
+        if (nrows < self->nrows) {
+            row=rows[irow];
+        } else {
+            row=irow;
+        }
+
+        if (row > current_row) {
+            bytes = (row-current_row)*self->rowsize;
+            if (0 != fseeko(self->fptr, bytes , SEEK_CUR)) {
+                PyErr_SetString(PyExc_IOError, "failed to seek");
+                return NULL;
+            }
+            current_row=row;
+        }
+
+        if (ncols < self->ncols) {
+            if (1 != read_binary_cols(self, ptr, cols, ncols)) {
+                return NULL;
+            }
+        } else {
+            if (1 != fread(ptr, (size_t)self->rowsize, 1, self->fptr)) {
+                PyErr_Format(PyExc_IOError, "failed to read row %ld", row);
+                return NULL;
+            }
+        }
+
+        ptr += itemsize;
+        current_row++;
+    }
+
     Py_RETURN_NONE;
 }
 
@@ -875,6 +949,7 @@ cleanup(struct PyRecfileObject* self)
     self->file_obj=NULL;
     Py_XDECREF(self->elsize_obj);
     Py_XDECREF(self->nel_obj);
+    Py_XDECREF(self->offset_obj);
     Py_XDECREF(self->scan_formats_obj);
     Py_XDECREF(self->print_formats_obj);
 
@@ -882,6 +957,8 @@ cleanup(struct PyRecfileObject* self)
     self->elsize=NULL;
     self->nel_obj=NULL;
     self->nel=NULL;
+    self->offset_obj=NULL;
+    self->offset=NULL;
     self->scan_formats_obj=NULL;
     self->print_formats_obj=NULL;
     self->buffer=NULL;
