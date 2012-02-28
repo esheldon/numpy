@@ -86,20 +86,7 @@ static int _set_fptr(struct PyRecfileObject* self)
     return 1;
 }
 
-static npy_intp get_nrows(PyObject* nrows_obj) {
-    npy_intp nrows=0;
-    if (nrows_obj == Py_None) {
-        // this shouldn't happen
-        nrows=0;
-    } else {
-        // assuming it is an npy_intp array, nonzero len
-        // safer since old python didn't support Py_ssize_t
-        // in PyArg_ParseTuple
-        //nrows = *(npy_intp* ) PyArray_GETPTR1((PyArrayObject*)nrows_obj, 0);
-        nrows = *(npy_intp* ) PyArray_DATA((PyArrayObject*)nrows_obj);
-    }
-    return nrows;
-}
+
 
 /*
  * calc row size and set buffer for skipping string cols
@@ -135,7 +122,7 @@ static int set_rowsize_and_buffer(struct PyRecfileObject* self) {
 static int
 PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwds)
 {
-    PyObject* nrows_obj=NULL; // if sent, 1 element npy_intp array
+    //PyObject* nrows_obj=NULL; // if sent, 1 element npy_intp array
     self->file_obj=NULL;
     self->is_ascii=0;
     self->scan_formats_obj=NULL;
@@ -156,7 +143,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
     self->buffsize=256; // will expand for large strings
     self->delim_is_space=0;
     if (!PyArg_ParseTuple(args, 
-                          (char*)"OsiOOOOOOO", 
+                          (char*)"OsiOOOOOO", 
                           &self->file_obj, 
                           &self->delim, 
                           &self->is_ascii,
@@ -165,8 +152,8 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
                           &self->nel_obj,
                           &self->offset_obj,
                           &self->scan_formats_obj,
-                          &self->print_formats_obj,
-                          &nrows_obj)) {
+                          &self->print_formats_obj)) {
+                          //&nrows_obj)) {
         return -1;
     }
 
@@ -183,7 +170,6 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
             self->delim_is_space=1;
         }
     }
-    self->nrows = get_nrows(nrows_obj);
     self->test=7;
 
     self->ncols = PyArray_SIZE((PyArrayObject*)self->elsize_obj);
@@ -212,21 +198,21 @@ PyRecfileObject_repr(struct PyRecfileObject* self) {
             self->delim, self->nrows, self->buffsize);
 }
 
+/*
+ * use a npy_intp object here since safer for old pythons
+ */
 static PyObject *
 PyRecfileObject_set_nrows(struct PyRecfileObject* self, PyObject* args) {
-    PyObject* nrows;
-    if (!PyArg_ParseTuple(args, (char*)"O", &nrows)) {
+    PyObject* nrows_obj;
+    if (!PyArg_ParseTuple(args, (char*)"O", &nrows_obj)) {
         return NULL;
     }
-    self->nrows = get_nrows(nrows);
+    
+    self->nrows = *(npy_intp* ) PyArray_DATA((PyArrayObject*)nrows_obj);
     Py_RETURN_NONE;
 }
 
 
-static PyObject *
-PyRecfileObject_test(struct PyRecfileObject* self) {
-    return PyInt_FromLong((long)self->test);
-}
 
 static int
 write_string_element(struct PyRecfileObject* self, npy_intp col, char* ptr) {
@@ -503,8 +489,8 @@ read_ascii_col(
         status=read_ascii_col_element(self, col, buffer);
         if (status != 1) {
             // exception set downstream, this is just some info
-            fprintf(stderr, "failed to read col %ld el %ld as type %ld", 
-                         col, el, typenum);
+            //fprintf(stderr, "failed to read col %ld el %ld as type %ld", 
+            //             col, el, typenum);
             break;
         }
         
@@ -669,6 +655,23 @@ PyRecfileObject_read_slice(struct PyRecfileObject* self, PyObject* args)
     }
 }
 
+/*
+ * Count ascii rows using full reading code.  This works even when there are
+ * newlines in the strings, but is much slower than just counting newlines.
+ */
+
+static PyObject* 
+PyRecfileObject_count_ascii_rows(struct PyRecfileObject* self, PyObject* args)
+{
+    PY_LONG_LONG nrows=0;
+    while (1 == read_ascii_row(self, self->buffer, 1)) {
+        nrows++;
+    }
+    PyErr_Clear();
+    return PyLong_FromLongLong(nrows);
+}
+
+
 
 static int
 read_ascii_cols(struct PyRecfileObject* self, 
@@ -679,7 +682,6 @@ read_ascii_cols(struct PyRecfileObject* self,
     int status=1;
     npy_intp icol=0, current_col=0, col=0;
     npy_intp tcol=0;
-    off_t bytes=0;
 
     for (icol=0; icol<ncols; icol++) {
 
@@ -775,7 +777,6 @@ read_binary_cols(struct PyRecfileObject* self,
                 npy_intp ncols)
 {
     npy_intp icol=0, current_col=0, col=0;
-    npy_intp tcol=0;
     off_t bytes=0;
 
     for (icol=0; icol<ncols; icol++) {
@@ -1037,11 +1038,11 @@ PyRecfile_get_formats(PyObject* self, PyObject *args) {
 
 
 static PyMethodDef PyRecfileObject_methods[] = {
-    {"test",        (PyCFunction)PyRecfileObject_test,         METH_VARARGS,  "test\n\nReturn test value."},
     {"set_nrows", (PyCFunction)PyRecfileObject_set_nrows,  METH_VARARGS,  "Set the nrows field\n"},
     {"write_ascii", (PyCFunction)PyRecfileObject_write_ascii,  METH_VARARGS,  "Write the input array to ascii\n"},
     {"read_slice",  (PyCFunction)PyRecfileObject_read_slice,   METH_VARARGS,  "read a slice into input array. Use for step != 1, otherwise can use numpy.fromfile\n"},
     {"read_subset", (PyCFunction)PyRecfileObject_read_subset,  METH_VARARGS,  "read arbitrary subsets\n"},
+    {"count_ascii_rows", (PyCFunction)PyRecfileObject_count_ascii_rows,  METH_VARARGS,  "count rows in ascii file\n"},
     {NULL}  /* Sentinel */
 };
 

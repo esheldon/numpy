@@ -7,6 +7,37 @@ import tempfile
 import _recfile
 
 class Recfile(_recfile.Recfile):
+    """
+    A class for reading and writing structured arrays to and from files.
+
+    parameters
+    ----------
+    fobj: file or string
+        A string or file object.
+    mode: string
+        Mode for opening when fobj is a string 
+    dtype:
+        A numpy dtype or descriptor describing each line of the file.  The
+        dtype must contain fields. This is a required parameter; it is a
+        keyword for clarity. 
+    nrows: int
+        Number of rows in the file.  If not entered, the rows will be counted
+        from the file itself. This is a simple calculation for binary files,
+        but can be slow for ascii files.
+    delim: string, optional
+        The delimiter for ascii files.  If None or "" the file is
+        assumed to be binary.  Should be a single character.
+    skipheader: int
+        Skip this many lines in the header.
+    offset: int
+        Move to this offset in the file.  Reads will all be relative to this
+        location. If not sent, it is taken from the current positioin in the
+        input file object or 0 if a filename was entered.
+    string_newlines: bool
+        If true, strings may contain newlines.  In this case the full
+        ascii reading code is used to count rows instead of a simple
+        newline count.  This is generally much slower.
+    """
     def __init__(self, fobj, mode='r', dtype=None, **keys):
 
         if dtype is None:
@@ -38,6 +69,7 @@ class Recfile(_recfile.Recfile):
         # this can be input, in which case we will
         # seek to this offset for reads
         self.file_offset=keys.get('offset',None)
+        self.string_newlines=keys.get('string_newlines',False)
 
         if self.file_offset is None:
             self.file_offset = self.fobj.tell()
@@ -59,10 +91,7 @@ class Recfile(_recfile.Recfile):
         if self.skipheader is not None:
             self._skipheader_lines(self.skipheader)
 
-        self._set_beginning_nrows(**keys)
 
-        # easier within the c program
-        nrows_send = numpy.array([self.nrows],dtype='intp')
         super(Recfile, self).__init__(self.fobj,
                                       self.delim,
                                       self.is_ascii,
@@ -71,8 +100,9 @@ class Recfile(_recfile.Recfile):
                                       self.nel,
                                       self.offset,
                                       self.scan_formats,
-                                      self.print_formats,
-                                      nrows_send)
+                                      self.print_formats)
+        self._set_beginning_nrows(**keys)
+
     def write(self, data, **keys):
         if self.fobj.closed:
             raise ValueError("file is not open")
@@ -506,17 +536,27 @@ class Recfile(_recfile.Recfile):
 
             if self.nrows < 0 and self.fobj.mode[0] == 'r':
                 self.nrows = self._get_nrows()
-
+        self._set_nrows(self.nrows)
             
+    def _set_nrows(self, nrows):
+        nrows_send = numpy.array([nrows],dtype='intp')
+        super(Recfile,self).set_nrows(nrows_send)
+
     def _get_nrows(self):
         """
         Count rows from beginning current offset
         """
-        if self.delim != "" and self.delim is not None:
-            # should do this in the C code in case strings have newlines
-            nrows = 0
-            for line in self.fobj:
-                nrows += 1
+        import time
+        if self.delim != "":
+            if self.fobj.tell() != self.file_offset:
+                self.fobj.seek(self.file_offset)
+            if self.string_newlines:
+                nrows=super(Recfile, self).count_ascii_rows()
+            else:
+                nrows = 0
+                for line in self.fobj:
+                    nrows += 1
+
             self.fobj.seek(self.file_offset)
         else:
             # For binary, try to figure out the number of rows based on
