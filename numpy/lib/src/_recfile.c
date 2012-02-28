@@ -175,10 +175,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
     }
     if (self->is_ascii) {
         if (strncmp(" ",self->delim,1)==0) {
-            //fprintf(stderr,"found delim is space\n");
             self->delim_is_space=1;
-        } else {
-            //fprintf(stderr,"found delim not space '%s'\n", self->delim);
         }
     }
     self->nrows = get_nrows(nrows_obj);
@@ -511,8 +508,8 @@ read_ascii_field(
 
 
 static int
-read_ascii_row(struct PyRecfileObject* self, char* ptr) {
-    int status=1, isstring=0, skip=0;
+read_ascii_row(struct PyRecfileObject* self, char* ptr, int skip) {
+    int status=1, isstring=0;
     npy_intp fnum=0, typenum=0;
     int c=0;
     for (fnum=0; fnum<self->nfields; fnum++) {
@@ -531,7 +528,10 @@ read_ascii_row(struct PyRecfileObject* self, char* ptr) {
                 //fprintf(stderr,"fnum: %ld read character: '%c'\n", fnum, c);
             }
         }
-        ptr += self->elsize[fnum]*self->nel[fnum];
+        // we are just reading into a buffer
+        if (!skip) {
+            ptr += self->elsize[fnum]*self->nel[fnum];
+        }
     }
 
     return status;
@@ -540,6 +540,14 @@ read_ascii_row(struct PyRecfileObject* self, char* ptr) {
 static int
 skip_ascii_rows(struct PyRecfileObject* self, npy_intp nrows) {
     int status=1;
+    npy_intp i=0;
+    int skip=1;
+    for (i=0; i<nrows; i++) {
+        status=read_ascii_row(self, self->buffer, skip);
+        if (status != 1) {
+            break;
+        }
+    }
     return status;
 }
 
@@ -548,6 +556,7 @@ read_ascii_slice(struct PyRecfileObject* self,
                  void* ptr, npy_intp start, npy_intp stop, npy_intp step) {
 
     int c=0;
+    int skip=0;
     npy_intp current_row=0, row=0;
     if (start > 0) {
         if (!skip_ascii_rows(self, start) ) {
@@ -570,7 +579,7 @@ read_ascii_slice(struct PyRecfileObject* self,
         }
 
         //fprintf(stderr,"reading ascii row: %ld\n", row);
-        if (!read_ascii_row(self, ptr)) {
+        if (!read_ascii_row(self, ptr, skip)) {
             // TODO use err string
             //PyErr_Format(PyExc_IOError, "failed to read row %ld", row);
             return NULL;
