@@ -995,43 +995,43 @@ PyRecfile_get_formats(PyObject* self, PyObject *args) {
     }
 
     dict = PyDict_New();
-    PyDict_SetItem(dict, PyInt_FromLong(NPY_INT8), PyString_FromString(NPY_INT8_FMT));
-    PyDict_SetItem(dict, PyInt_FromLong(NPY_UINT8), PyString_FromString(NPY_UINT8_FMT));
-    PyDict_SetItem(dict, PyInt_FromLong(NPY_INT16), PyString_FromString(NPY_INT16_FMT));
-    PyDict_SetItem(dict, PyInt_FromLong(NPY_UINT16), PyString_FromString(NPY_UINT16_FMT));
-    PyDict_SetItem(dict, PyInt_FromLong(NPY_INT32), PyString_FromString(NPY_INT32_FMT));
-    PyDict_SetItem(dict, PyInt_FromLong(NPY_UINT32), PyString_FromString(NPY_UINT32_FMT));
-    PyDict_SetItem(dict, PyInt_FromLong(NPY_INT64), PyString_FromString(NPY_INT64_FMT));
-    PyDict_SetItem(dict, PyInt_FromLong(NPY_UINT64), PyString_FromString(NPY_UINT64_FMT));
+    PyDict_SetItem(dict, PyLong_FromLong((long)NPY_INT8), PyString_FromString(NPY_INT8_FMT));
+    PyDict_SetItem(dict, PyLong_FromLong((long)NPY_UINT8), PyString_FromString(NPY_UINT8_FMT));
+    PyDict_SetItem(dict, PyLong_FromLong((long)NPY_INT16), PyString_FromString(NPY_INT16_FMT));
+    PyDict_SetItem(dict, PyLong_FromLong((long)NPY_UINT16), PyString_FromString(NPY_UINT16_FMT));
+    PyDict_SetItem(dict, PyLong_FromLong((long)NPY_INT32), PyString_FromString(NPY_INT32_FMT));
+    PyDict_SetItem(dict, PyLong_FromLong((long)NPY_UINT32), PyString_FromString(NPY_UINT32_FMT));
+    PyDict_SetItem(dict, PyLong_FromLong((long)NPY_INT64), PyString_FromString(NPY_INT64_FMT));
+    PyDict_SetItem(dict, PyLong_FromLong((long)NPY_UINT64), PyString_FromString(NPY_UINT64_FMT));
 
 #ifdef NPY_INT128
-    PyDict_SetItem(dict, PyInt_FromLong(NPY_INT128), PyString_FromString(NPY_INT128_FMT));
-    PyDict_SetItem(dict, PyInt_FromLong(NPY_UINT128), PyString_FromString(NPY_UINT128_FMT));
+    PyDict_SetItem(dict, PyLong_FromLong((long)NPY_INT128), PyString_FromString(NPY_INT128_FMT));
+    PyDict_SetItem(dict, PyLong_FromLong((long)NPY_UINT128), PyString_FromString(NPY_UINT128_FMT));
 #endif
 #ifdef NPY_INT256
-    PyDict_SetItem(dict, PyInt_FromLong(NPY_INT256), PyString_FromString(NPY_INT256_FMT));
-    PyDict_SetItem(dict, PyInt_FromLong(NPY_UINT256), PyString_FromString(NPY_UINT256_FMT));
+    PyDict_SetItem(dict, PyLong_FromLong((long)NPY_INT256), PyString_FromString(NPY_INT256_FMT));
+    PyDict_SetItem(dict, PyLong_FromLong((long)NPY_UINT256), PyString_FromString(NPY_UINT256_FMT));
 #endif
 
     if (type == 1) {
         // scan formats
-        PyDict_SetItem(dict, PyInt_FromLong(NPY_FLOAT32), PyString_FromString("f"));
-        PyDict_SetItem(dict, PyInt_FromLong(NPY_FLOAT64), PyString_FromString("lf"));
+        PyDict_SetItem(dict, PyLong_FromLong((long)NPY_FLOAT32), PyString_FromString("f"));
+        PyDict_SetItem(dict, PyLong_FromLong((long)NPY_FLOAT64), PyString_FromString("lf"));
 
 #ifdef NPY_FLOAT128
-        PyDict_SetItem(dict, PyInt_FromLong(NPY_FLOAT128), PyString_FromString("Lf"));
+        PyDict_SetItem(dict, PyLong_FromLong((long)NPY_FLOAT128), PyString_FromString("Lf"));
 #endif
     } else {
         // print formats
-        PyDict_SetItem(dict, PyInt_FromLong(NPY_FLOAT32), PyString_FromString(".7g"));
-        PyDict_SetItem(dict, PyInt_FromLong(NPY_FLOAT64), PyString_FromString(".16g"));
+        PyDict_SetItem(dict, PyLong_FromLong((long)NPY_FLOAT32), PyString_FromString(".7g"));
+        PyDict_SetItem(dict, PyLong_FromLong((long)NPY_FLOAT64), PyString_FromString(".16g"));
 
 #ifdef NPY_FLOAT128
         // what should this be?
-        PyDict_SetItem(dict, PyInt_FromLong(NPY_FLOAT128), PyString_FromString(".16g"));
+        PyDict_SetItem(dict, PyLong_FromLong((long)NPY_FLOAT128), PyString_FromString(".16g"));
 #endif
 
-        PyDict_SetItem(dict, PyInt_FromLong(NPY_STRING), PyString_FromString("s"));
+        PyDict_SetItem(dict, PyLong_FromLong((long)NPY_STRING), PyString_FromString("s"));
     }
     return dict;
 }
