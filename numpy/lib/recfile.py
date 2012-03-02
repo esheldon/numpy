@@ -91,7 +91,7 @@ class Recfile(_recfile.Recfile):
         Skip this many lines in the header.
     offset: int, optional
         Move to this offset in the file.  Reads will all be relative to this
-        location. If not sent, it is taken from the current positioin in the
+        location. If not sent, it is taken from the current position in the
         input file object or 0 if a filename was entered.
 
     string_newlines: bool, optional
@@ -116,7 +116,7 @@ class Recfile(_recfile.Recfile):
         can contain any characters, including newlines, but for text files
         quoted strings are not currently supported: the quotes will be part of
         the result.  For binary files, structured sub-arrays and complex can be
-        writen and read, but this is not supported yet for text files. 
+        written and read, but this is not supported yet for text files. 
 
     examples
     ---------
