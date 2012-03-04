@@ -24,6 +24,15 @@ struct PyRecfileObject {
     char* delim;
     int delim_is_space;
 
+    // strings can be surrounded by quotes.  Must be a one-char string
+    // or ""
+    char* quote_char;
+    int has_quoted_strings;
+
+    // strings can be variable length; in this case we only keep as many as fit
+    // in the fixed width numpy array buffer.
+    int has_var_strings;
+
     // One element for each column of the file, in order.
     // must be contiguous npy_intp arrays
     //PyObject* typecodes_obj;
@@ -57,7 +66,6 @@ struct PyRecfileObject {
     // don't print chars beyind null, will result in not fixed width cols
     int ignore_null;
 
-    int test;
 };
 
 /*
@@ -119,12 +127,19 @@ static int set_rowsize_and_buffer(struct PyRecfileObject* self) {
     return 1;
 }
 
-static int
-PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwds)
+static void 
+set_defaults(struct PyRecfileObject* self)
 {
-    //PyObject* nrows_obj=NULL; // if sent, 1 element npy_intp array
     self->file_obj=NULL;
+
+    self->delim=NULL;
+    self->delim_is_space=0;
     self->is_ascii=0;
+
+    self->quote_char=NULL;
+    self->has_quoted_strings=0;
+    self->has_var_strings=0;
+
     self->scan_formats_obj=NULL;
     self->print_formats_obj=NULL;
     self->typenums_obj=NULL;
@@ -140,10 +155,16 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
     self->bracket_arrays=0;
     self->padnull=0;
     self->ignore_null=0;
+
     self->buffsize=256; // will expand for large strings
-    self->delim_is_space=0;
+
+}
+static int
+PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwds)
+{
+    set_defaults(self);
     if (!PyArg_ParseTuple(args, 
-                          (char*)"OsiOOOOOOii", 
+                          (char*)"OsiOOOOOOiisi", 
                           &self->file_obj, 
                           &self->delim, 
                           &self->is_ascii,
@@ -154,8 +175,9 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
                           &self->scan_formats_obj,
                           &self->print_formats_obj,
                           &self->padnull,
-                          &self->ignore_null)) {
-                          //&nrows_obj)) {
+                          &self->ignore_null, 
+                          &self->quote_char,
+                          &self->has_var_strings)) {
         return -1;
     }
 
@@ -166,13 +188,27 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
         PyErr_Format(PyExc_IOError, 
                 "delim for ascii should be 1 character, got '%s'", 
                 self->delim);
+        return -1;
     }
     if (self->is_ascii) {
         if (strncmp(" ",self->delim,1)==0) {
             self->delim_is_space=1;
         }
+        if (NULL != self->quote_char) {
+            int n=0;
+            n=strlen(self->quote_char);
+            if (n > 1) {
+                PyErr_Format(PyExc_IOError, 
+                        "quote char for ascii should be 1 character, got '%s'", 
+                        self->quote_char);
+                return -1;
+            }
+            if (n == 1) {
+                self->has_quoted_strings=1;
+                //self->has_var_strings=1;
+            }
+        }
     }
-    self->test=7;
 
     self->ncols = PyArray_SIZE((PyArrayObject*)self->elsize_obj);
     self->typenums=(npy_intp*) PyArray_DATA((PyArrayObject*)self->typenums_obj);
@@ -455,6 +491,101 @@ scan_number(struct PyRecfileObject* self, npy_intp col, char* buffer) {
     return status;
 }
 
+/*
+ *
+ */
+static int 
+read_var_string(struct PyRecfileObject* self,
+                   npy_intp nbytes, 
+                   char* buffer)
+{
+    return 0;
+}
+
+
+/* 
+ * The string may be quoted.  In this case we must treat the data as variable
+ * length.  All characters are allowed within the string except the quote
+ * character (unless escaped by a preceding \)
+ *
+ * We first skip past any spaces or tabs
+ *
+ * If the first character we find is not the quote character, we proceed as if
+ * this was a variable length string, in which newlines are not allowed.
+ *
+ * Only store as many bytes are are in the string (bytes parameter)
+ *
+ * if we do not encounter the quote character at the beginning, then we just
+ * call the read_var_string code to look for the delimiter
+ */
+
+static int 
+read_quoted_string(struct PyRecfileObject* self,
+                   npy_intp nbytes, 
+                   char* buffer)
+{
+    int status = 1;
+    npy_intp nread=0, istore=0;
+    char c=0, cprev=0;
+
+    fprintf(stderr,"skipping white space\n");
+    // read until we find a non-whitespace character
+    c = fgetc(self->fptr); nread++;
+    while (c == ' ' || c == '\t') {
+        fprintf(stderr,"%c",c);
+        if (c == EOF) {
+            fprintf(stderr,"EOF found\n");
+            status=0;
+            goto _error_out_rdquote;
+        }
+        c = fgetc(self->fptr); nread++;
+    }
+
+    if (c != self->quote_char[0]) {
+        fprintf(stderr,"quote char not found\n");
+        // quote char not found, treat as a variable length string
+        // rewind before we started looking for quote
+        fseeko(self->fptr, -nread, SEEK_CUR);
+        //return read_var_string(self, nbytes, buffer);
+        return read_bytes(self, nbytes, buffer);
+    }
+
+    // read until we find the quote character, but only store
+    // up to nbytes worth of data in buffer.  Allow escaped
+    // quote characters using forward slash
+
+    c = fgetc(self->fptr);
+    while (c != self->quote_char[0] || cprev == '\\') {
+        if (c == EOF) {
+            status=0;
+            goto _error_out_rdquote;
+        }
+        
+        if (c == self->quote_char[0] && cprev == '\\') {
+            // was escaped quote character
+            buffer[istore-1] = self->quote_char[0];
+            // don't advance istore
+        } else {
+            if (istore < nbytes) {
+                buffer[istore] = c;
+                istore++;
+                fprintf(stderr,"%c",c);
+            }
+        }
+        cprev=c;
+        c = fgetc(self->fptr);
+    }
+    fprintf(stderr,"\n");
+
+_error_out_rdquote:
+    if (status != 1 ) {
+        PyErr_Format(PyExc_IOError, "error extracting quoted string\n");
+    }
+
+    return status;
+}
+
+
 static int
 read_ascii_col_element(struct PyRecfileObject* self,
                          npy_intp col,
@@ -464,7 +595,12 @@ read_ascii_col_element(struct PyRecfileObject* self,
     npy_intp typenum=0;
     typenum=self->typenums[col];
     if (NPY_STRING == typenum) {
-        status = read_bytes(self, self->elsize[col], buffer);
+        if (self->has_quoted_strings) {
+            status = read_quoted_string(self, self->elsize[col], buffer);
+        } else {
+            // read as fixed width bytes
+            status = read_bytes(self, self->elsize[col], buffer);
+        }
     } else {
         status = scan_number(self, col, buffer);
     }
@@ -497,8 +633,9 @@ read_ascii_col(
         }
         
         // if whitespace or string and not last el of last col, we need
-        // to read the delimeter
-        if ( (isstring || self->delim_is_space)) {
+        // to read the delimeter.  For var strings we *have* read the
+        // delimiter (but not for quoted strings)
+        if ( (isstring || self->delim_is_space) && !self->has_var_strings) {
             if ( col==(self->ncols-1) && el==(nel-1)) {
                 // nothing, only a newline there
             } else {

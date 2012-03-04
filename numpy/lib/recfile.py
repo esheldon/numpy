@@ -103,6 +103,9 @@ class Recfile(_recfile.Recfile):
         of a simple newline count.  Because the text is fully processed twice,
         this can double the time to read files.
 
+        if quote_char is sent, the same slower line count mechanism is also
+        used.
+
     padnull: bool
         If True, nulls in strings are replaced with spaces when writing text
     ignorenull: bool
@@ -194,8 +197,14 @@ class Recfile(_recfile.Recfile):
         # seek to this offset for reads
         self.file_offset=keys.get('offset',None)
         self.string_newlines=keys.get('string_newlines',False)
+
+
+        self.quote_char = keys.get('quote_char','')
+        self.var_strings = keys.get('var_strings',False)
+
         self.padnull = 1 if self.padnull else 0
         self.ignorenull = 1 if self.ignorenull else 0
+        self.var_strings = 1 if self.var_strings else 0
 
         if self.file_offset is None:
             self.file_offset = self.fobj.tell()
@@ -228,7 +237,9 @@ class Recfile(_recfile.Recfile):
                                       self.scan_formats,
                                       self.print_formats,
                                       self.padnull,
-                                      self.ignorenull)
+                                      self.ignorenull,
+                                      self.quote_char,
+                                      self.var_strings)
         self._set_beginning_nrows(**keys)
 
     def write(self, data, **keys):
