@@ -205,7 +205,6 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
             }
             if (n == 1) {
                 self->has_quoted_strings=1;
-                //self->has_var_strings=1;
             }
         }
     }
@@ -492,14 +491,57 @@ scan_number(struct PyRecfileObject* self, npy_intp col, char* buffer) {
 }
 
 /*
+ * Read an un-quoted variable length string.  We stop reading when we hit an
+ * un-escaped delimiter or a newline
  *
+ * Note because the row,column could be a var string and the user might not end
  */
+
 static int 
 read_var_string(struct PyRecfileObject* self,
                    npy_intp nbytes, 
                    char* buffer)
 {
-    return 0;
+
+    int status=1;
+    char c=0, cprev=0;
+    npy_intp istore=0;
+
+    // read until we find an un-escaped delimiter, but only store
+    // up to nbytes worth of data in buffer.
+
+    c = fgetc(self->fptr);
+    while ( (c != self->delim[0] || cprev == '\\') && c != '\n') {
+        if (c == EOF) {
+            PyErr_Format(PyExc_IOError, "Hit EOF extracting variable length string\n");
+            status=0;
+            goto _error_out_rdvar;
+        }
+
+        if (c == self->delim[0] && cprev == '\\') {
+            // was escaped delim character
+            buffer[istore-1] = c;
+            // don't advance istore
+        } else {
+            if (istore < nbytes) {
+                buffer[istore] = c;
+                istore++;
+                //fprintf(stderr,"%c",c);
+            }
+        }
+        cprev=c;
+        c = fgetc(self->fptr);
+    }
+
+    // The external code assumes we have not read the delimiter for strings but
+    // we can in this special case of variable length strings. So seek back one.
+    if (c == self->delim[0]) {
+        fseeko(self->fptr, -1, SEEK_CUR);
+    }
+_error_out_rdvar:
+
+
+    return status;
 }
 
 
@@ -528,13 +570,12 @@ read_quoted_string(struct PyRecfileObject* self,
     npy_intp nread=0, istore=0;
     char c=0, cprev=0;
 
-    fprintf(stderr,"skipping white space\n");
     // read until we find a non-whitespace character
     c = fgetc(self->fptr); nread++;
     while (c == ' ' || c == '\t') {
-        fprintf(stderr,"%c",c);
+        //fprintf(stderr,"%c",c);
         if (c == EOF) {
-            fprintf(stderr,"EOF found\n");
+            PyErr_Format(PyExc_IOError, "Hit EOF extracting quoted string\n");
             status=0;
             goto _error_out_rdquote;
         }
@@ -542,12 +583,17 @@ read_quoted_string(struct PyRecfileObject* self,
     }
 
     if (c != self->quote_char[0]) {
-        fprintf(stderr,"quote char not found\n");
+        //fprintf(stderr,"quote char not found\n");
         // quote char not found, treat as a variable length string
         // rewind before we started looking for quote
         fseeko(self->fptr, -nread, SEEK_CUR);
         //return read_var_string(self, nbytes, buffer);
-        return read_bytes(self, nbytes, buffer);
+
+        if (self->has_var_strings) {
+            return read_var_string(self, nbytes, buffer);
+        } else {
+            return read_bytes(self, nbytes, buffer);
+        }
     }
 
     // read until we find the quote character, but only store
@@ -557,30 +603,28 @@ read_quoted_string(struct PyRecfileObject* self,
     c = fgetc(self->fptr);
     while (c != self->quote_char[0] || cprev == '\\') {
         if (c == EOF) {
+            PyErr_Format(PyExc_IOError, "Hit EOF extracting quoted string\n");
             status=0;
             goto _error_out_rdquote;
         }
         
         if (c == self->quote_char[0] && cprev == '\\') {
             // was escaped quote character
-            buffer[istore-1] = self->quote_char[0];
+            buffer[istore-1] = c;
             // don't advance istore
         } else {
             if (istore < nbytes) {
                 buffer[istore] = c;
                 istore++;
-                fprintf(stderr,"%c",c);
+                //fprintf(stderr,"%c",c);
             }
         }
         cprev=c;
         c = fgetc(self->fptr);
     }
-    fprintf(stderr,"\n");
+    //fprintf(stderr,"\n");
 
 _error_out_rdquote:
-    if (status != 1 ) {
-        PyErr_Format(PyExc_IOError, "error extracting quoted string\n");
-    }
 
     return status;
 }

@@ -106,6 +106,29 @@ class Recfile(_recfile.Recfile):
         if quote_char is sent, the same slower line count mechanism is also
         used.
 
+    quote_char: string, optional
+        The text file to be read may have quoted strings.  This character is
+        used in the file to quote strings, e.g.  "my string".  The string *can*
+        contain the quote character itself if escaped, e.g.
+
+            "my string has a \\" in it"
+
+        The quote_char must be a length 1 string or ""
+
+    var_strings: bool, optional
+
+        The text file to be read may have unquoted variable length strings.
+        Note if the string in the file is larger than allowed by the input
+        dtype describing this column, then the result will be truncated.
+
+        The delimiter may appear in the string as long as it is escaped, 
+        e.g. for comma delimited \\,
+
+        Note variable length strings cannot contain the newline character, as
+        it is effectively the delimiter for the last column in a row.  If you
+        need to have newlines in the strings, use a quoted string or a fixed
+        width string
+
     padnull: bool
         If True, nulls in strings are replaced with spaces when writing text
     ignorenull: bool
@@ -200,6 +223,10 @@ class Recfile(_recfile.Recfile):
 
 
         self.quote_char = keys.get('quote_char','')
+        if self.quote_char is None:
+            self.quote_char = ""
+        if len(self.quote_char) > 1:
+            raise ValueError("quote char must have len <= 1")
         self.var_strings = keys.get('var_strings',False)
 
         self.padnull = 1 if self.padnull else 0
