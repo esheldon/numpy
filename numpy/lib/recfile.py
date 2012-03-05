@@ -951,8 +951,8 @@ class TestReadWrite(unittest.TestCase):
 
                ('Sscalar',Sdtype),
                ('Svec',   Sdtype, nvec),
-               ('Sarr',   Sdtype, ashape),
-               ('lind','i4')]
+               ('Sarr',   Sdtype, ashape)]#,
+               #('lind','i4')]
 
         dtype2=[('index','i4'),
                 ('x','f8'),
@@ -1145,6 +1145,7 @@ QQQQQQ"{d}25\n""".format(d=delim)
 
         delims = {'csv':',',
                   'colon':':',
+                  'dat':' ',
                   'tab':'\t'}
         #delims={'csv':','}
 
@@ -1180,7 +1181,6 @@ QQQQQQ"{d}25\n""".format(d=delim)
                 self.assertEqual(d['s10'][0], "hello", "testing var length string field")
                 self.assertEqual(d['s10'][1], "there", "testing var length string field")
                 self.assertEqual(d['s10'][2], "wonderous amazing"[0:10], "testing var length string field")
-                print "delim: '" + delim+"'   '"+d['s10'][2]+"'"
                 self.assertEqual(d['s10'][3], "a,b", "testing var length string field")
 
             finally:

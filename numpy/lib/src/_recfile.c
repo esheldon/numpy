@@ -492,7 +492,9 @@ scan_number(struct PyRecfileObject* self, npy_intp col, char* buffer) {
 
 /*
  * Read an un-quoted variable length string.  We stop reading when we hit an
- * un-escaped delimiter or a newline
+ * un-escaped delimiter or a newline.  The user should be careful when the
+ * delimiter is a space; unescaped leading spaces will look like the delimiter
+ * and must be escaped.
  *
  * Note because the row,column could be a var string and the user might not end
  */
@@ -515,7 +517,7 @@ read_var_string(struct PyRecfileObject* self,
         if (c == EOF) {
             PyErr_Format(PyExc_IOError, "Hit EOF extracting variable length string\n");
             status=0;
-            goto _error_out_rdvar;
+            break;
         }
 
         if (c == self->delim[0] && cprev == '\\') {
@@ -532,14 +534,6 @@ read_var_string(struct PyRecfileObject* self,
         cprev=c;
         c = fgetc(self->fptr);
     }
-
-    // The external code assumes we have not read the delimiter for strings but
-    // we did in this special case of variable length strings. So seek back one.
-    //if (c == self->delim[0]) {
-    //    fseeko(self->fptr, -1, SEEK_CUR);
-    //}
-_error_out_rdvar:
-
 
     return status;
 }
@@ -686,38 +680,19 @@ static int
 read_ascii_col(
         struct PyRecfileObject* self, npy_intp col, char* buffer, int skip) 
 {
-    int status=1, isstring=0;
-    npy_intp nel=0, el=0, fsize=0, typenum=0;
+    int status=1;
+    npy_intp nel=0, el=0, fsize=0;
 
     fsize = self->elsize[col];
-    typenum=self->typenums[col];
 
     nel=self->nel[col];
 
-    isstring = (NPY_STRING == typenum) ? 1 : 0;
     for (el=0; el<nel; el++) {
         status=read_ascii_col_element(self, col, buffer);
         if (status != 1) {
             break;
         }
-        
-        // if whitespace or string and not last el of last col, we need
-        // to read the delimeter (or newline).  For var strings we *have* read the
-        // delimiter (but not for quoted strings)
-        /*
-        if ( (isstring || self->delim_is_space) && !self->has_var_strings) {
-            if ( col==(self->ncols-1) && el==(nel-1)) {
-                // nothing, only a newline there
-            } else {
-                fgetc(self->fptr);
-            }
-        }
-        */
-        /*
-        if (isstring) {
-            fgetc(self->fptr);
-        }
-        */
+
         if (!skip) {
             // if skipping, just re-use buffer
             buffer += fsize;
@@ -779,8 +754,6 @@ read_ascii_slice(struct PyRecfileObject* self,
         if (!read_ascii_row(self, ptr, skip)) {
             return NULL;
         }
-        // read newline
-        //fgetc(self->fptr);
 
         ptr += self->rowsize;
         current_row += 1;
@@ -973,8 +946,6 @@ read_ascii_subset(struct PyRecfileObject* self,
         if (status!=1) {
             return NULL;
         }
-        // newline
-        //fgetc(self->fptr);
 
         ptr += itemsize;
         current_row++;
