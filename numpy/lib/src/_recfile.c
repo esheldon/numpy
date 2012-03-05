@@ -534,10 +534,10 @@ read_var_string(struct PyRecfileObject* self,
     }
 
     // The external code assumes we have not read the delimiter for strings but
-    // we can in this special case of variable length strings. So seek back one.
-    if (c == self->delim[0]) {
-        fseeko(self->fptr, -1, SEEK_CUR);
-    }
+    // we did in this special case of variable length strings. So seek back one.
+    //if (c == self->delim[0]) {
+    //    fseeko(self->fptr, -1, SEEK_CUR);
+    //}
 _error_out_rdvar:
 
 
@@ -547,8 +547,9 @@ _error_out_rdvar:
 
 /* 
  * The string may be quoted.  In this case we must treat the data as variable
- * length.  All characters are allowed within the string except the quote
- * character (unless escaped by a preceding \)
+ * length.  All characters are allowed within the string, even newlines.
+ * Note the quote character can also appear if escaped, preceded by forward 
+ * slash
  *
  * We first skip past any spaces or tabs
  *
@@ -573,7 +574,6 @@ read_quoted_string(struct PyRecfileObject* self,
     // read until we find a non-whitespace character
     c = fgetc(self->fptr); nread++;
     while (c == ' ' || c == '\t') {
-        //fprintf(stderr,"%c",c);
         if (c == EOF) {
             PyErr_Format(PyExc_IOError, "Hit EOF extracting quoted string\n");
             status=0;
@@ -583,16 +583,19 @@ read_quoted_string(struct PyRecfileObject* self,
     }
 
     if (c != self->quote_char[0]) {
-        //fprintf(stderr,"quote char not found\n");
         // quote char not found, treat as a variable length string
         // rewind before we started looking for quote
         fseeko(self->fptr, -nread, SEEK_CUR);
         //return read_var_string(self, nbytes, buffer);
 
         if (self->has_var_strings) {
+            // this will consume the delimiter or newline
             return read_var_string(self, nbytes, buffer);
         } else {
-            return read_bytes(self, nbytes, buffer);
+            // we must consume the delimiter or newline
+            status = read_bytes(self, nbytes, buffer);
+            fgetc(self->fptr);
+            return status;
         }
     }
 
@@ -616,13 +619,22 @@ read_quoted_string(struct PyRecfileObject* self,
             if (istore < nbytes) {
                 buffer[istore] = c;
                 istore++;
-                //fprintf(stderr,"%c",c);
             }
         }
         cprev=c;
         c = fgetc(self->fptr);
     }
-    //fprintf(stderr,"\n");
+
+    // done reading the string, now make sure we consume the delimiter
+    c = fgetc(self->fptr);
+    while (c != self->delim[0] && c != '\n') {
+        if (c == EOF) {
+            PyErr_Format(PyExc_IOError, "Hit EOF finding delim/newline\n");
+            status=0;
+            goto _error_out_rdquote;
+        }
+        c = fgetc(self->fptr);
+    }
 
 _error_out_rdquote:
 
@@ -630,6 +642,8 @@ _error_out_rdquote:
 }
 
 
+// consume the data and the delimiter (or newline)
+// note number columns automatically consume the delimiter
 static int
 read_ascii_col_element(struct PyRecfileObject* self,
                          npy_intp col,
@@ -641,12 +655,26 @@ read_ascii_col_element(struct PyRecfileObject* self,
     if (NPY_STRING == typenum) {
         if (self->has_quoted_strings) {
             status = read_quoted_string(self, self->elsize[col], buffer);
+        } else if (self->has_var_strings) {
+            status = read_var_string(self, self->elsize[col], buffer);
         } else {
+            char c;
             // read as fixed width bytes
             status = read_bytes(self, self->elsize[col], buffer);
+            // we must consume the delimiter/newline
+            c = fgetc(self->fptr);
+            if (c != self->delim[0] && c != '\n') {
+                fprintf(stderr,"col %ld tried to read delim '%s' or newline, but got '%c'\n", 
+                col, self->delim,c);
+            }
         }
     } else {
         status = scan_number(self, col, buffer);
+        // our scan formats will consume the delimiter when it is not a space,
+        // but if it is a space we have to consume it manually
+        if (self->delim_is_space) {
+            fgetc(self->fptr);
+        }
     }
     return status;
 }
@@ -670,15 +698,13 @@ read_ascii_col(
     for (el=0; el<nel; el++) {
         status=read_ascii_col_element(self, col, buffer);
         if (status != 1) {
-            // exception set downstream, this is just some info
-            //fprintf(stderr, "failed to read col %ld el %ld as type %ld", 
-            //             col, el, typenum);
             break;
         }
         
         // if whitespace or string and not last el of last col, we need
-        // to read the delimeter.  For var strings we *have* read the
+        // to read the delimeter (or newline).  For var strings we *have* read the
         // delimiter (but not for quoted strings)
+        /*
         if ( (isstring || self->delim_is_space) && !self->has_var_strings) {
             if ( col==(self->ncols-1) && el==(nel-1)) {
                 // nothing, only a newline there
@@ -686,7 +712,12 @@ read_ascii_col(
                 fgetc(self->fptr);
             }
         }
-
+        */
+        /*
+        if (isstring) {
+            fgetc(self->fptr);
+        }
+        */
         if (!skip) {
             // if skipping, just re-use buffer
             buffer += fsize;
@@ -749,7 +780,7 @@ read_ascii_slice(struct PyRecfileObject* self,
             return NULL;
         }
         // read newline
-        fgetc(self->fptr);
+        //fgetc(self->fptr);
 
         ptr += self->rowsize;
         current_row += 1;
@@ -943,7 +974,7 @@ read_ascii_subset(struct PyRecfileObject* self,
             return NULL;
         }
         // newline
-        fgetc(self->fptr);
+        //fgetc(self->fptr);
 
         ptr += itemsize;
         current_row++;

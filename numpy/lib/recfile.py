@@ -94,18 +94,6 @@ class Recfile(_recfile.Recfile):
         location. If not sent, it is taken from the current position in the
         input file object or 0 if a filename was entered.
 
-    string_newlines: bool, optional
-        If true, strings in text files may contain newlines.  This is only
-        relevant for text files when the nrows= keyword is not sent, because
-        the number of lines must be counted.  
-        
-        In this case the full text reading code is used to count rows instead
-        of a simple newline count.  Because the text is fully processed twice,
-        this can double the time to read files.
-
-        if quote_char is sent, the same slower line count mechanism is also
-        used.
-
     quote_char: string, optional
         The text file to be read may have quoted strings.  This character is
         used in the file to quote strings, e.g.  "my string".  The string *can*
@@ -116,7 +104,6 @@ class Recfile(_recfile.Recfile):
         The quote_char must be a length 1 string or ""
 
     var_strings: bool, optional
-
         The text file to be read may have unquoted variable length strings.
         Note if the string in the file is larger than allowed by the input
         dtype describing this column, then the result will be truncated.
@@ -129,6 +116,19 @@ class Recfile(_recfile.Recfile):
         need to have newlines in the strings, use a quoted string or a fixed
         width string
 
+    string_newlines: bool, optional
+        If true, strings in text files may contain newlines.  This is only
+        relevant for text files when the nrows= keyword is not sent, because
+        the number of lines must be counted.  
+        
+        In this case the full text reading code is used to count rows instead
+        of a simple newline count.  Because the text is fully processed twice,
+        this can double the time to read files.
+
+        if quote_char is sent, the same slower line count mechanism is also
+        used.
+
+
     padnull: bool
         If True, nulls in strings are replaced with spaces when writing text
     ignorenull: bool
@@ -138,11 +138,8 @@ class Recfile(_recfile.Recfile):
 
     limitations
     -----------
-        Currently, only fixed width string fields are supported.  String fields
-        can contain any characters, including newlines, but for text files
-        quoted strings are not currently supported: the quotes will be part of
-        the result.  For binary files, structured sub-arrays and complex can be
-        written and read, but this is not supported yet for text files. 
+        For binary files, structured sub-arrays and complex can be written and
+        read, but this is not supported yet for text files. 
 
     examples
     ---------
@@ -954,7 +951,8 @@ class TestReadWrite(unittest.TestCase):
 
                ('Sscalar',Sdtype),
                ('Svec',   Sdtype, nvec),
-               ('Sarr',   Sdtype, ashape)]
+               ('Sarr',   Sdtype, ashape),
+               ('lind','i4')]
 
         dtype2=[('index','i4'),
                 ('x','f8'),
@@ -967,6 +965,8 @@ class TestReadWrite(unittest.TestCase):
             data[t+'vec'] = 1 + numpy.arange(nrows*nvec,dtype=t).reshape(nrows,nvec)
             arr = 1 + numpy.arange(nrows*ashape[0]*ashape[1],dtype=t)
             data[t+'arr'] = arr.reshape(nrows,ashape[0],ashape[1])
+
+        #data['lind'] = numpy.arange(nrows,dtype='i4')
 
         vid=0
         aid=0
@@ -992,7 +992,7 @@ class TestReadWrite(unittest.TestCase):
                   'dat':' ',
                   'colon':':',
                   'tab':'\t'}
-        #delims={'csv':','}
+        delims={'csv':','}
         for delim_type in delims:
             try:
                 delim=delims[delim_type]
@@ -1087,6 +1087,106 @@ class TestReadWrite(unittest.TestCase):
                     #pass
                     os.remove(fname)
 
+    def testAsciiQuotedStrings(self):
+        """
+        Test reading data with quoted strings and newlines
+
+        One of the quoted strings is short, one has a newline
+
+        The non-quoted strings here are fixed length but one has a newline
+        """
+
+        delims = {'csv':',',
+                  'dat':' ',
+                  'colon':':',
+                  'tab':'\t'}
+        #delims={'csv':','}
+
+        for delim_type in delims:
+            delim=delims[delim_type]
+            try:
+                dt=[('ra','f8'),('s10','S10'),('i','i4')]
+                data="""32.55{d}kkkkkkkkkk{d}25
+32.55{d}"QQQ\\"QQ"{d}25
+32.55{d}kkk
+kkkkkk{d}25
+32.55{d}"QQ
+QQQQQQ"{d}25\n""".format(d=delim)
+
+
+                fname=tempfile.mktemp(prefix='recfile-AsciiQuotedStrings-',
+                                      suffix='.'+delim_type)
+                fobj=open(fname,'w')
+                fobj.write(data)
+                fobj.close()
+
+                rw=Recfile(fname,'r',dtype=dt,delim=delim,quote_char='"',string_newlines=True)
+                d = rw[:]
+                rw.close()
+
+                self.assertEqual(d['s10'][0], "kkkkkkkkkk", "testing fixed length string field")
+                self.assertEqual(d['s10'][1], 'QQQ"QQ', "testing short quoted string field")
+                self.assertEqual(d['s10'][2], "kkk\nkkkkkk", "testing fixed string field with newline")
+                self.assertEqual(d['s10'][3], "QQ\nQQQQQQ", "testing quoted field with newline")
+
+            finally:
+                if os.path.exists(fname):
+                    #pass
+                    os.remove(fname)
+
+
+    def testAsciiVarStrings(self):
+        """
+        Test reading data with variable length strings.  No newlines
+        allowed in this case, because the strings are not quoted
+
+        We escape delimiters in strings as necessary
+        """
+
+        delims = {'csv':',',
+                  'colon':':',
+                  'tab':'\t'}
+        #delims={'csv':','}
+
+        for delim_type in delims:
+            delim=delims[delim_type]
+            try:
+                dt=[('ra','f8'),('s10','S10'),('i','i4')]
+
+                if delim == ' ':
+                    third = 'wonderous\\ amazing'
+                else:
+                    third = 'wonderous amazing'
+                if delim == ',':
+                    fourth='a\\,b'
+                else:
+                    fourth='a,b'
+                data="""32.55{d}hello{d}25
+32.55{d}there{d}25
+32.55{d}{third}{d}25
+32.55{d}{fourth}{d}25\n""".format(d=delim,third=third,fourth=fourth)
+
+
+                fname=tempfile.mktemp(prefix='recfile-AsciiVarStrings-',
+                                      suffix='.'+delim_type)
+                fobj=open(fname,'w')
+                fobj.write(data)
+                fobj.close()
+
+                rw=Recfile(fname,'r',dtype=dt,delim=delim,var_strings=True)
+                d = rw[:]
+                rw.close()
+
+                self.assertEqual(d['s10'][0], "hello", "testing var length string field")
+                self.assertEqual(d['s10'][1], "there", "testing var length string field")
+                self.assertEqual(d['s10'][2], "wonderous amazing"[0:10], "testing var length string field")
+                print "delim: '" + delim+"'   '"+d['s10'][2]+"'"
+                self.assertEqual(d['s10'][3], "a,b", "testing var length string field")
+
+            finally:
+                if os.path.exists(fname):
+                    pass
+                    #os.remove(fname)
 
 
     def testBinaryWriteRead(self):
