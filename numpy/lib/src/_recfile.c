@@ -1,10 +1,12 @@
 /*
- * Defines the Recfile class.  This c class should not be used
- * directly, as very little error checking is performed.  Instead
- * use the numpy.lib.recfile.Recfile object, which inherits from this
- * one and does all the type and error checking.
+ * Defines the Recfile class.  This c class should not be used directly, as
+ * very little error checking is performed.  Instead use the
+ * numpy.recfile.Recfile object, which inherits from this one and does all the
+ * type and error checking.
  *
- * todo: for delim space, skip possibly more than one character
+ * todo: deal with file object in python3: You can no longer get a FILE*
+ * associated with an open file!  All the ascii number reading code relies on
+ * the power of fscanf
  */
 
 #define NPY_NO_DEPRECATED_API
@@ -24,14 +26,10 @@ struct PyRecfileObject {
     char* delim;
     int delim_is_space;
 
-    // strings can be surrounded by quotes.  Must be a one-char string
-    // or ""
-    char* quote_char;
-    int has_quoted_strings;
 
-    // strings can be variable length; in this case we only keep as many as fit
-    // in the fixed width numpy array buffer.
-    int has_var_strings;
+    npy_intp nrows; // rows from the input offset of file
+    npy_intp ncols;
+
 
     // One element for each column of the file, in order.
     // must be contiguous npy_intp arrays
@@ -49,49 +47,59 @@ struct PyRecfileObject {
     npy_intp* nel;
     npy_intp* offset;
 
+
     // rowsize in bytes for binary
     npy_intp rowsize;
 
+
+    // reading text
+    //
+    // strings can be surrounded by quotes.  Must be a one-char string
+    // or empty ""  Quoted strings can be variable length.
+    char* quote_char;
+    int has_quoted_strings;
+
+    // strings can be variable length but not quoted; in this case we only keep
+    // as many as fit in the fixed width numpy array buffer.
+    int has_var_strings;
+
+    // buffer when skipping text fields
     npy_intp buffsize;
     char* buffer;
 
-    npy_intp nrows; // rows from the input offset of file
-    npy_intp ncols;
 
-    // these not yet implemented
-    // bracketed arrays for postgres
-    int bracket_arrays;
+    // writing text
     // replace ascii string characters beyond null with spaces
     int padnull;
     // don't print chars beyind null, will result in not fixed width cols
     int ignore_null;
 
+    // not yet implemented
+    // bracketed arrays for postgres
+    int bracket_arrays;
+
 };
 
 /*
  * Check validity of input file object.  We will keep a reference to the file
- * object so it won't get closed on us.  In newer versions of python we can
- * also be thread safe.
+ * object so it won't get closed on us.
  */
 static int _set_fptr(struct PyRecfileObject* self)
 {
+    int status=1;
     if (PyFile_Check(self->file_obj)) {
 		self->fptr = PyFile_AsFile(self->file_obj);
 		if (NULL==self->fptr) {
             PyErr_SetString(PyExc_IOError, "Input file object is invalid");
-            return 0;
-		}
-
-        Py_XINCREF(self->file_obj);
-#if ((PY_MAJOR_VERSION == 2 && PY_MINOR_VERSION >= 6) || (PY_MAJOR_VERSION == 3))
-        //fprintf(stderr,"inc use fptr\n");
-        //PyFile_IncUseCount((PyFileObject*)self->file_obj);
-#endif
+            status = 0;
+		} else {
+            Py_XINCREF(self->file_obj);
+        }
 	} else {
         PyErr_SetString(PyExc_IOError, "Input must be an open file object");
-        return 0;
+        status=0;
 	}
-    return 1;
+    return status;
 }
 
 
@@ -528,7 +536,6 @@ read_var_string(struct PyRecfileObject* self,
             if (istore < nbytes) {
                 buffer[istore] = c;
                 istore++;
-                //fprintf(stderr,"%c",c);
             }
         }
         cprev=c;
