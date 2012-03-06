@@ -133,8 +133,8 @@ class Recfile(_recfile.Recfile):
         If True, nulls in strings are replaced with spaces when writing text
     ignorenull: bool
         If True, nulls in strings are not written when writing text.  This
-        results in string fields that are not fixed width, so cannot be
-        read back in using recfile
+        results in variable length strings, so be careful to also escape
+        embedded delimiters
 
     limitations
     -----------
@@ -197,10 +197,8 @@ class Recfile(_recfile.Recfile):
             self.fobj_was_input = False
             fpath = os.path.expanduser(fobj)
             fpath = os.path.expandvars(fpath)
-            if mode == 'r+' and not os.path.exists(fpath):
-                # path doesn't exist but we want to append.  Change the
-                # mode to w+
-                mode = 'w+'
+            if mode in ['u','r+'] and not os.path.exists(fpath):
+                raise RuntimeError("File does not exist, cannot open with mode '%s'" % mode)
             self.fobj = open(fpath, mode)
         else:
             raise ValueError("Input file should be string or file object")
@@ -282,8 +280,8 @@ class Recfile(_recfile.Recfile):
         """
         if self.fobj.closed:
             raise ValueError("file is not open")
-        if self.fobj.mode[0] != 'w' and '+' not in self.fobj.mode:
-            raise ValueError("You must open with 'w*' or 'r+' to write")
+        if self.fobj.mode not in ['w','w+','u','r+']:
+            raise ValueError("You must open with mode ['w','w+','u','r+'] to write")
         if data.dtype != self.dtype:
             raise ValueError("Input dtype:\n\t%s\n"
                              "does not match file:\n\t%s" % (data.dtype.descr,self.dtype.descr))
@@ -318,8 +316,8 @@ class Recfile(_recfile.Recfile):
         """
         if self.fobj.closed:
             raise ValueError("file is not open")
-        if self.fobj.mode[0] != 'r' and '+' not in self.fobj.mode:
-            raise ValueError("You must open with 'r*' or 'w+' to read")
+        if self.fobj.mode not in ['r','r+','w+']:
+            raise ValueError("You must open with ['r','r+','w+'] to read")
 
         if self.fobj.tell() != self.file_offset:
             self.fobj.seek(self.file_offset)
@@ -375,8 +373,8 @@ class Recfile(_recfile.Recfile):
         """
         if self.fobj.closed:
             raise ValueError("file is not open")
-        if self.fobj.mode[0] != 'r' and '+' not in self.fobj.mode:
-            raise ValueError("You must open with 'r*' or 'w+' to read")
+        if self.fobj.mode not in ['r','r+','w+']:
+            raise ValueError("You must open with ['r','r+','w+'] to read")
 
         if self.fobj.tell() != self.file_offset:
             self.fobj.seek(self.file_offset)
@@ -713,7 +711,7 @@ class Recfile(_recfile.Recfile):
             if self.nrows is None:
                 self.nrows = -1
 
-            if self.nrows < 0 and self.fobj.mode[0] == 'r':
+            if self.nrows < 0 and self.fobj.mode in ['r','r+','u']:
                 self.nrows = self._get_nrows()
         self._set_nrows(self.nrows)
             
