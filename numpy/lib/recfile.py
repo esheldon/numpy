@@ -218,6 +218,14 @@ class Recfile(_recfile.Recfile):
         self.file_offset=keys.get('offset',None)
         self.string_newlines=keys.get('string_newlines',False)
 
+        converters = keys.get('converters',None)
+
+        nf=len(self.dtype.names)
+        self.converters=numpy.empty(nf, dtype='object')
+        self.converters.fill(None)
+        if converters is not None:
+            for col in converters:
+                  self.converters[col] = converters[col]
 
         self.quote_char = keys.get('quote_char','')
         if self.quote_char is None:
@@ -263,7 +271,8 @@ class Recfile(_recfile.Recfile):
                                       self.padnull,
                                       self.ignorenull,
                                       self.quote_char,
-                                      self.var_strings)
+                                      self.var_strings,
+                                      self.converters)
         self._set_beginning_nrows(**keys)
 
     def write(self, data, **keys):

@@ -15,6 +15,7 @@
 #include <Python.h>
 #include "numpy/arrayobject.h" 
 
+
 struct PyRecfileObject {
     PyObject_HEAD
     // we will keep a reference to file_obj
@@ -40,12 +41,14 @@ struct PyRecfileObject {
     PyObject* offset_obj;
     PyObject* scan_formats_obj;
     PyObject* print_formats_obj;
+    PyObject* converters_obj;
 
     // jost pointers to the data sections
     npy_intp* typenums;
     npy_intp* elsize;
     npy_intp* nel;
     npy_intp* offset;
+    npy_intp* converters;
 
 
     // rowsize in bytes for binary
@@ -156,6 +159,7 @@ set_defaults(struct PyRecfileObject* self)
     self->rowsize=0;
     self->nel_obj=NULL;
     self->offset_obj=NULL;
+    self->converters_obj=NULL;
     self->offset=NULL;
     self->nel=NULL;
     self->nrows=0;
@@ -172,7 +176,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
 {
     set_defaults(self);
     if (!PyArg_ParseTuple(args, 
-                          (char*)"OsiOOOOOOiisi", 
+                          (char*)"OsiOOOOOOiisi|O", 
                           &self->file_obj, 
                           &self->delim, 
                           &self->is_ascii,
@@ -185,7 +189,8 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
                           &self->padnull,
                           &self->ignore_null, 
                           &self->quote_char,
-                          &self->has_var_strings)) {
+                          &self->has_var_strings,
+                          &self->converters_obj)) {
         return -1;
     }
 
@@ -222,6 +227,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
     self->elsize=(npy_intp*) PyArray_DATA((PyArrayObject*)self->elsize_obj);
     self->nel=(npy_intp*) PyArray_DATA((PyArrayObject*)self->nel_obj);
     self->offset=(npy_intp*) PyArray_DATA((PyArrayObject*)self->offset_obj);
+    self->converters=(npy_intp*) PyArray_DATA((PyArrayObject*)self->converters_obj);
 
     if (!set_rowsize_and_buffer(self)) {
         return -1;
@@ -481,11 +487,29 @@ read_bytes(struct PyRecfileObject* self, npy_intp nbytes, char* buffer)
     return status;
 }
 
+
+void convert_value(struct PyRecfileObject* self, npy_intp col, const char *source, Py_ssize_t len, char *buffer)
+{
+   PyObject *sourceStr = PyString_FromStringAndSize(source, len);
+
+   PyObject *result = PyObject_CallFunction(self->converters[col], "s", sourceStr);
+   Py_DECREF(sourceStr);
+
+   if (!PyArray_CheckScalar(result))
+   {
+      // throw exception
+   }
+
+   PyArray_ScalarAsCtype(result, buffer);
+   Py_DECREF(result);
+}
+
 static int
 scan_number(struct PyRecfileObject* self, npy_intp col, char* buffer) {
     int status=1;
     int ret=0;
     char* fmt=NULL;
+
     fmt = PyArray_GETPTR1((PyArrayObject*)self->scan_formats_obj, col);
 
     ret = fscanf(self->fptr, fmt, buffer);
@@ -506,6 +530,30 @@ scan_number(struct PyRecfileObject* self, npy_intp col, char* buffer) {
  *
  * Note because the row,column could be a var string and the user might not end
  */
+
+static int
+next_string_length(struct PyRecfileObject* self)
+{
+    int start = ftell(self->fptr);
+    int len = 0;
+
+    int status = 0;
+    char cprev = 0;
+    char c = fgetc(self->fptr);
+    while ( (c != self->delim[0] || cprev == '\\') && c != '\n') {
+        if (c == EOF) {
+            PyErr_Format(PyExc_IOError, "Hit EOF looking for next variable length string\n");
+            status=0;
+            break;
+        }
+
+        len++;
+        c = fgetc(self->fptr);
+    }
+
+    fseek(self->fptr, start, SEEK_SET);
+    return len;
+}
 
 static int 
 read_var_string(struct PyRecfileObject* self,
@@ -653,7 +701,16 @@ read_ascii_col_element(struct PyRecfileObject* self,
     int status=1;
     npy_intp typenum=0;
     typenum=self->typenums[col];
-    if (NPY_STRING == typenum) {
+
+    PyObject *converter = self->converters[col];
+    if (converter != Py_None) {
+          int len = next_string_length(self);
+            char *temp = calloc(len, 1);
+            status = read_var_string(self, len, temp);
+            free(temp);
+            convert_value(self, col, temp, len, buffer);
+    }
+    else if (NPY_STRING == typenum) {
         if (self->has_quoted_strings) {
             status = read_quoted_string(self, self->elsize[col], buffer);
         } else if (self->has_var_strings) {
@@ -671,6 +728,7 @@ read_ascii_col_element(struct PyRecfileObject* self,
         }
     } else {
         status = scan_number(self, col, buffer);
+
         // our scan formats will consume the delimiter when it is not a space,
         // but if it is a space we have to consume it manually
         if (self->delim_is_space) {

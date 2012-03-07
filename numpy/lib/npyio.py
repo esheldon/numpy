@@ -1,4 +1,4 @@
-__all__ = ['savetxt', 'loadtxt', 'genfromtxt', 'ndfromtxt', 'mafromtxt',
+__all__ = ['savetxt', 'loadtxt', 'loadtxt2', 'genfromtxt', 'ndfromtxt', 'mafromtxt',
            'recfromtxt', 'recfromcsv', 'load', 'loads', 'save', 'savez',
            'savez_compressed', 'packbits', 'unpackbits', 'fromregex', 'DataSource']
 
@@ -865,6 +865,193 @@ def loadtxt(fname, dtype=float, comments='#', delimiter=None,
             return X.T
     else:
         return X
+
+
+def loadtxt2(fname, dtype=float, comments='#', delimiter=None,
+            converters=None, skiprows=0, usecols=None, unpack=False,
+            ndmin=0):
+    """
+    Load data from a text file.
+
+    Each row in the text file must have the same number of values.
+
+    Parameters
+    ----------
+    fname : file or str
+        File, filename, or generator to read.  If the filename extension is
+        ``.gz`` or ``.bz2``, the file is first decompressed. Note that
+        generators should return byte strings for Python 3k.
+    dtype : data-type, optional
+        Data-type of the resulting array; default: float.  If this is a
+        record data-type, the resulting array will be 1-dimensional, and
+        each row will be interpreted as an element of the array.  In this
+        case, the number of columns used must match the number of fields in
+        the data-type.
+    comments : str, optional
+        The character used to indicate the start of a comment;
+        default: '#'.
+    delimiter : str, optional
+        The string used to separate values.  By default, this is any
+        whitespace.
+    converters : dict, optional
+        A dictionary mapping column number to a function that will convert
+        that column to a float.  E.g., if column 0 is a date string:
+        ``converters = {0: datestr2num}``.  Converters can also be used to
+        provide a default value for missing data (but see also `genfromtxt`):
+        ``converters = {3: lambda s: float(s.strip() or 0)}``.  Default: None.
+    skiprows : int, optional
+        Skip the first `skiprows` lines; default: 0.
+    usecols : sequence, optional
+        Which columns to read, with 0 being the first.  For example,
+        ``usecols = (1,4,5)`` will extract the 2nd, 5th and 6th columns.
+        The default, None, results in all columns being read.
+    unpack : bool, optional
+        If True, the returned array is transposed, so that arguments may be
+        unpacked using ``x, y, z = loadtxt(...)``.  When used with a record
+        data-type, arrays are returned for each field.  Default is False.
+    ndmin : int, optional
+        The returned array will have at least `ndmin` dimensions.
+        Otherwise mono-dimensional axes will be squeezed.
+        Legal values: 0 (default), 1 or 2.
+        .. versionadded:: 1.6.0
+
+    Returns
+    -------
+    out : ndarray
+        Data read from the text file.
+
+    See Also
+    --------
+    load, fromstring, fromregex
+    genfromtxt : Load data with missing values handled as specified.
+    scipy.io.loadmat : reads MATLAB data files
+
+    Notes
+    -----
+    This function aims to be a fast reader for simply formatted files.  The
+    `genfromtxt` function provides more sophisticated handling of, e.g.,
+    lines with missing values.
+
+    Examples
+    --------
+    >>> from StringIO import StringIO   # StringIO behaves like a file object
+    >>> c = StringIO("0 1\\n2 3")
+    >>> np.loadtxt(c)
+    array([[ 0.,  1.],
+           [ 2.,  3.]])
+
+    >>> d = StringIO("M 21 72\\nF 35 58")
+    >>> np.loadtxt(d, dtype={'names': ('gender', 'age', 'weight'),
+    ...                      'formats': ('S1', 'i4', 'f4')})
+    array([('M', 21, 72.0), ('F', 35, 58.0)],
+          dtype=[('gender', '|S1'), ('age', '<i4'), ('weight', '<f4')])
+
+    >>> c = StringIO("1,0,2\\n3,0,4")
+    >>> x, y = np.loadtxt(c, delimiter=',', usecols=(0, 2), unpack=True)
+    >>> x
+    array([ 1.,  3.])
+    >>> y
+    array([ 2.,  4.])
+
+    """
+    # Type conversions for Py3 convenience
+    comments = asbytes(comments)
+    user_converters = converters
+    if delimiter is not None:
+        delimiter = asbytes(delimiter)
+    if usecols is not None:
+        usecols = list(usecols)
+
+    fown = False
+    try:
+        if _is_string_like(fname):
+            fown = True
+            if fname.endswith('.gz'):
+                fh = iter(seek_gzip_factory(fname))
+            elif fname.endswith('.bz2'):
+                import bz2
+                fh = iter(bz2.BZ2File(fname))
+            else:
+                fh = iter(open(fname, 'r'))
+        else:
+            fh = iter(fname)
+    except TypeError:
+        raise ValueError('fname must be a string, file handle, or generator')
+
+    def split_line(line):
+        """Chop off comments, strip, and split at delimiter."""
+        line = asbytes(line).split(comments)[0].strip(asbytes('\r\n'))
+        if line:
+            return line.split(delimiter)
+        else:
+            return []
+
+    array = None
+
+    try:
+        # Skip the first `skiprows` lines
+        for i in xrange(skiprows):
+            fh.readline()
+
+        # Read until we find a line with some values, and use
+        # it to estimate the number of columns, N.
+        first_vals = None
+        try:
+            while not first_vals:
+                prev_line = fh.tell()
+                first_line= fh.readline()
+                first_vals = split_line(first_line)
+            fh.seek(prev_line)
+        except StopIteration:
+            # End of lines reached
+            first_line = ''
+            first_vals = []
+            warnings.warn('loadtxt: Empty input file: "%s"' % fname)
+
+        num_cols = len(first_vals)
+
+        dtype = np.dtype(dtype)
+
+        if dtype.names is None:
+            recfile_dtype = np.dtype(dtype.descr * num_cols)
+        else:
+            recfile_dtype = dtype
+
+        if delimiter is None:
+            delimiter = ' '
+
+        rec = np.recfile.Recfile(fh, dtype=recfile_dtype, delim=delimiter)
+
+        if usecols:
+            cols = []
+            col_names = recfile_dtype.names
+            print col_names
+            for i in usecols:
+                cols.append(col_names[i])
+            array = rec[cols][:]
+        else:
+            array = rec[:]
+
+        if dtype.names is None:
+            num_rows = array.size
+            array.dtype = dtype
+            if usecols:
+                array.shape = (num_rows, len(usecols))
+            else:
+                array.shape = (num_rows, num_cols)
+ 
+    finally:
+        if fown:
+            fh.close()
+
+    if unpack:
+        if dtype.names:
+            # For structured arrays, return an array for each field.
+            return [array[field] for field in dtype.names]
+        else:
+            return array.T
+    else:
+        return array
 
 
 def savetxt(fname, X, fmt='%.18e', delimiter=' ', newline='\n', header='',
