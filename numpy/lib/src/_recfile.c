@@ -495,11 +495,6 @@ void convert_value(struct PyRecfileObject* self, npy_intp col, const char *sourc
    PyObject *result = PyObject_CallFunction(self->converters[col], "s", sourceStr);
    Py_DECREF(sourceStr);
 
-   if (!PyArray_CheckScalar(result))
-   {
-      // throw exception
-   }
-
    PyArray_ScalarAsCtype(result, buffer);
    Py_DECREF(result);
 }

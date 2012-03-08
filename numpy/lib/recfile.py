@@ -219,14 +219,8 @@ class Recfile(_recfile.Recfile):
         self.string_newlines=keys.get('string_newlines',False)
 
         converters = keys.get('converters',None)
-
-        nf=len(self.dtype.names)
-        self.converters=numpy.empty(nf, dtype='object')
-        self.converters.fill(None)
-        if converters is not None:
-            for col in converters:
-                  self.converters[col] = converters[col]
-
+        self._set_converters(converters)
+        
         self.quote_char = keys.get('quote_char','')
         if self.quote_char is None:
             self.quote_char = ""
@@ -705,6 +699,26 @@ class Recfile(_recfile.Recfile):
         self.allscanf=allscanf
         self.allprintf=allprintf
 
+    def _set_converters(self, converters):
+        nf=len(self.dtype.names)
+        self.converters=numpy.empty(nf, dtype='object')
+        self.converters.fill(None)
+         
+        if converters is None:
+            return
+
+        class DtypeDecorator:
+            def __init__(self, f, t):
+               self.f = f
+               self.t = t
+            def __call__(self, x):
+               return self.t(self.f(x))
+        
+        for col in converters:
+            name = self.dtype.names[col]
+            dt = self.dtype.fields[name][0]
+            dec = DtypeDecorator(converters[col], dt.type)
+            self.converters[col] = dec
 
     def _skipheader_lines(self, nlines):
         for i in xrange(nlines):
