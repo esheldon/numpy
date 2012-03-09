@@ -490,11 +490,15 @@ read_bytes(struct PyRecfileObject* self, npy_intp nbytes, char* buffer)
 
 void convert_value(struct PyRecfileObject* self, npy_intp col, const char *source, Py_ssize_t len, char *buffer)
 {
+   // Create string object for value to pass to user defined python function
    PyObject *sourceStr = PyString_FromStringAndSize(source, len);
 
+   // Call user provided converter function
    PyObject *result = PyObject_CallFunction(self->converters[col], "s", sourceStr);
    Py_DECREF(sourceStr);
 
+   // Output from converter function was converted to proper dtype.
+   // Store value in array.
    PyArray_ScalarAsCtype(result, buffer);
    Py_DECREF(result);
 }
@@ -527,7 +531,7 @@ scan_number(struct PyRecfileObject* self, npy_intp col, char* buffer) {
  */
 
 static int
-next_string_length(struct PyRecfileObject* self)
+next_var_string_length(struct PyRecfileObject* self)
 {
     int start = ftell(self->fptr);
     int len = 0;
@@ -695,15 +699,17 @@ read_ascii_col_element(struct PyRecfileObject* self,
 {
     int status=1;
     npy_intp typenum=0;
-    typenum=self->typenums[col];
+    PyObject *converter=0;
 
-    PyObject *converter = self->converters[col];
+    typenum=self->typenums[col];
+    converter=self->converters[col];
+
     if (converter != Py_None) {
-          int len = next_string_length(self);
-            char *temp = calloc(len, 1);
-            status = read_var_string(self, len, temp);
-            free(temp);
-            convert_value(self, col, temp, len, buffer);
+        int len = next_var_string_length(self);
+        char *temp = calloc(len, 1);
+        status = read_var_string(self, len, temp);
+        convert_value(self, col, temp, len, buffer);
+        free(temp);
     }
     else if (NPY_STRING == typenum) {
         if (self->has_quoted_strings) {

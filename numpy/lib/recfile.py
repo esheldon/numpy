@@ -707,6 +707,7 @@ class Recfile(_recfile.Recfile):
         if converters is None:
             return
 
+        # decorator for wrapping converter function
         class DtypeDecorator:
             def __init__(self, f, t):
                self.f = f
@@ -717,6 +718,8 @@ class Recfile(_recfile.Recfile):
         for col in converters:
             name = self.dtype.names[col]
             dt = self.dtype.fields[name][0]
+            # wrap converter function with function to convert output
+            # to proper dtype
             dec = DtypeDecorator(converters[col], dt.type)
             self.converters[col] = dec
 
