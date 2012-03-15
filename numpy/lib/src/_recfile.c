@@ -499,7 +499,17 @@ void convert_value(struct PyRecfileObject* self, npy_intp col, const char *sourc
 
    // Output from converter function was converted to proper dtype.
    // Store value in array.
-   PyArray_ScalarAsCtype(result, buffer);
+   PyArray_Descr *descr =  PyArray_DescrFromScalar(result);
+   if (PyTypeNum_ISEXTENDED(descr->type_num)) {
+      void *dataPtr = 0;
+      PyArray_ScalarAsCtype(result, &dataPtr);
+      if (dataPtr > 0) {
+         memcpy(buffer, dataPtr, descr->elsize);
+      }
+   }
+   else {
+      PyArray_ScalarAsCtype(result, buffer);
+   }
    Py_DECREF(result);
 }
 
@@ -547,6 +557,7 @@ next_var_string_length(struct PyRecfileObject* self)
         }
 
         len++;
+        cprev = c;
         c = fgetc(self->fptr);
     }
 
@@ -590,6 +601,55 @@ read_var_string(struct PyRecfileObject* self,
     }
 
     return status;
+}
+
+
+static int 
+next_quoted_string_length(struct PyRecfileObject* self)
+{
+    int status = 1;
+    npy_intp nread=0, istore=0;
+    char c=0, cprev=0;
+    int len=0;
+
+    int start = ftell(self->fptr);
+
+    // read until we find a non-whitespace character
+    c = fgetc(self->fptr); nread++;
+    while (c == ' ' || c == '\t') {
+        if (c == EOF) {
+            PyErr_Format(PyExc_IOError, "Hit EOF extracting quoted string\n");
+            return 0;
+        }
+        c = fgetc(self->fptr); nread++;
+    }
+
+    if (c != self->quote_char[0]) {
+        // quote char not found, treat as a variable length string
+        // rewind before we started looking for quote
+        fseeko(self->fptr, -nread, SEEK_CUR);
+        //return read_var_string(self, nbytes, buffer);
+        return next_var_string_length(self);
+    }
+
+    // read until we find the quote character, but only store
+    // up to nbytes worth of data in buffer.  Allow escaped
+    // quote characters using forward slash
+
+    c = fgetc(self->fptr);
+    while (c != self->quote_char[0] || cprev == '\\') {
+        if (c == EOF) {
+            PyErr_Format(PyExc_IOError, "Hit EOF extracting quoted string\n");
+            return 0;
+        }
+
+        len++;
+        cprev=c;
+        c = fgetc(self->fptr);
+    }
+
+    fseek(self->fptr, start, SEEK_SET);
+    return len;
 }
 
 
@@ -705,11 +765,20 @@ read_ascii_col_element(struct PyRecfileObject* self,
     converter=self->converters[col];
 
     if (converter != Py_None) {
-        int len = next_var_string_length(self);
-        char *temp = calloc(len, 1);
-        status = read_var_string(self, len, temp);
-        convert_value(self, col, temp, len, buffer);
-        free(temp);
+        if (self->has_quoted_strings) {
+            int len = next_quoted_string_length(self);
+            char *temp = calloc(len, 1);
+            status = read_quoted_string(self, len, temp);
+            convert_value(self, col, temp, len, buffer);
+            free(temp);
+        }
+        else {
+            int len = next_var_string_length(self);
+            char *temp = calloc(len, 1);
+            status = read_var_string(self, len, temp);
+            convert_value(self, col, temp, len, buffer);
+            free(temp);
+        }
     }
     else if (NPY_STRING == typenum) {
         if (self->has_quoted_strings) {
