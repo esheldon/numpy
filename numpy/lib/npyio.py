@@ -793,6 +793,28 @@ def loadtxt(fname, dtype=float, comments='#', delimiter=None,
         if fown:
             fh.close()
 
+    # Multicolumn data are returned with shape (1, N, M), i.e.
+    # (1, 1, M) for a single row - remove the singleton dimension there
+    if array.ndim == 3 and array.shape[:2] == (1, 1):
+        array.shape = (1, -1)
+
+    # Verify that the array has at least dimensions `ndmin`.
+    # Check correctness of the values of `ndmin`
+    if not ndmin in [0, 1, 2]:
+        raise ValueError('Illegal value of ndmin keyword: %s' % ndmin)
+
+    # Tweak the size and shape of the arrays - remove extraneous dimensions
+    if array.ndim > ndmin:
+        array = np.squeeze(array)
+
+    # and ensure we have the minimum number of dimensions asked for
+    # - has to be in this order for the odd case ndmin=1, array.squeeze().ndim=0
+    if array.ndim < ndmin:
+        if ndmin == 1:
+            array = np.atleast_1d(array)
+        elif ndmin == 2:
+            array = np.atleast_2d(array).T
+
     if unpack:
         if dtype.names:
             # For structured arrays, return an array for each field.
