@@ -711,7 +711,6 @@ class Recfile(_recfile.Recfile):
                self.f = f
                self.t = t
             def __call__(self, x):
-               print x
                return self.t(self.f(x))
             def getTypeStr(self):
                return type(self.f).__name__
