@@ -766,7 +766,7 @@ def loadtxt(fname, dtype=float, comments='#', delimiter=None,
         if delimiter is None:
             delimiter = ' '
 
-        rec = np.recfile.Recfile(fh, dtype=recfile_dtype, delim=delimiter, converters=converters)
+        rec = np.recfile.Recfile(fh, dtype=recfile_dtype, delim=delimiter, converters=converters, var_strings=True)
 
         if usecols:
             # read subset of columns            

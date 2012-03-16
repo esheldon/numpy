@@ -706,12 +706,15 @@ class Recfile(_recfile.Recfile):
             return
 
         # decorator for wrapping converter function
-        class DtypeDecorator:
+        class DtypeDecorator(object):
             def __init__(self, f, t):
                self.f = f
                self.t = t
             def __call__(self, x):
+               print x
                return self.t(self.f(x))
+            def getTypeStr(self):
+               return type(self.f).__name__
         
         for col in converters:
             name = self.dtype.names[col]

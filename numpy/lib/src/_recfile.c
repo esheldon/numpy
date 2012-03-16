@@ -488,13 +488,22 @@ read_bytes(struct PyRecfileObject* self, npy_intp nbytes, char* buffer)
 }
 
 
-void convert_value(struct PyRecfileObject* self, npy_intp col, const char *source, Py_ssize_t len, char *buffer)
+static int
+convert_value(struct PyRecfileObject* self, npy_intp col, const char *source, Py_ssize_t len, char *buffer)
 {
+   int status = 1;
    // Create string object for value to pass to user defined python function
    PyObject *sourceStr = PyString_FromStringAndSize(source, len);
+   printf("JNB: convert_value() sourceStr=%s\n", PyString_AsString(sourceStr));
 
    // Call user provided converter function
-   PyObject *result = PyObject_CallFunction(self->converters[col], "s", sourceStr);
+   PyObject *result = PyObject_CallFunction(self->converters[col], "S", sourceStr);
+   if (result == 0) {
+      PyObject *typeStr = PyObject_CallMethod(self->converters[col], "getTypeStr", NULL);
+      PyErr_Format(PyExc_TypeError, "%s object is not callable", PyString_AsString(typeStr));
+      Py_DECREF(typeStr);
+      return 0;
+   }
    Py_DECREF(sourceStr);
 
    // Output from converter function was converted to proper dtype.
@@ -504,13 +513,15 @@ void convert_value(struct PyRecfileObject* self, npy_intp col, const char *sourc
       void *dataPtr = 0;
       PyArray_ScalarAsCtype(result, &dataPtr);
       if (dataPtr > 0) {
-         memcpy(buffer, dataPtr, descr->elsize);
+         memcpy(buffer, dataPtr, self->elsize[col]);
       }
    }
    else {
       PyArray_ScalarAsCtype(result, buffer);
    }
    Py_DECREF(result);
+
+   return status;
 }
 
 static int
@@ -769,15 +780,29 @@ read_ascii_col_element(struct PyRecfileObject* self,
             int len = next_quoted_string_length(self);
             char *temp = calloc(len, 1);
             status = read_quoted_string(self, len, temp);
-            convert_value(self, col, temp, len, buffer);
+            status = convert_value(self, col, temp, len, buffer);
             free(temp);
         }
-        else {
+        else if (self->has_var_strings) {
             int len = next_var_string_length(self);
             char *temp = calloc(len, 1);
             status = read_var_string(self, len, temp);
-            convert_value(self, col, temp, len, buffer);
+            status = convert_value(self, col, temp, len, buffer);
             free(temp);
+        }
+        else {
+            int len = self->elsize[col];
+            char *temp = calloc(len, 1);
+            status = read_bytes(self, len, temp);
+            status = convert_value(self, col, temp, len, buffer);
+            free(temp);
+
+            // consume delimiter/newline
+            char c = fgetc(self->fptr);
+            if (c != self->delim[0] && c != '\n') {
+                fprintf(stderr,"col %ld tried to read delim '%s' or newline, but got '%c'\n", 
+                col, self->delim,c);
+            }
         }
     }
     else if (NPY_STRING == typenum) {
