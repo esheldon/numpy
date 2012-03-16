@@ -494,7 +494,6 @@ convert_value(struct PyRecfileObject* self, npy_intp col, const char *source, Py
    int status = 1;
    // Create string object for value to pass to user defined python function
    PyObject *sourceStr = PyString_FromStringAndSize(source, len);
-   printf("JNB: convert_value() sourceStr=%s\n", PyString_AsString(sourceStr));
 
    // Call user provided converter function
    PyObject *result = PyObject_CallFunction(self->converters[col], "S", sourceStr);
@@ -783,7 +782,10 @@ read_ascii_col_element(struct PyRecfileObject* self,
             status = convert_value(self, col, temp, len, buffer);
             free(temp);
         }
-        else if (self->has_var_strings) {
+        // Since we're using a user defined function to convert
+        // string to dtype instead of fscanf, treat string as
+        // variable length if converting to non string dtype.
+        else if (self->has_var_strings || NPY_STRING != typenum) {
             int len = next_var_string_length(self);
             char *temp = calloc(len, 1);
             status = read_var_string(self, len, temp);
