@@ -62,6 +62,9 @@ struct PyRecfileObject {
     char* quote_char;
     int has_quoted_strings;
 
+    // char used to indicate comment
+    char* comment_char;
+
     // strings can be variable length but not quoted; in this case we only keep
     // as many as fit in the fixed width numpy array buffer.
     int has_var_strings;
@@ -148,6 +151,7 @@ set_defaults(struct PyRecfileObject* self)
     self->is_ascii=0;
 
     self->quote_char=NULL;
+    self->comment_char=NULL;
     self->has_quoted_strings=0;
     self->has_var_strings=0;
 
@@ -176,7 +180,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
 {
     set_defaults(self);
     if (!PyArg_ParseTuple(args, 
-                          (char*)"OsiOOOOOOiisi|O", 
+                          (char*)"OsiOOOOOOiissi|O", 
                           &self->file_obj, 
                           &self->delim, 
                           &self->is_ascii,
@@ -189,6 +193,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
                           &self->padnull,
                           &self->ignore_null, 
                           &self->quote_char,
+                          &self->comment_char,
                           &self->has_var_strings,
                           &self->converters_obj)) {
         return -1;
@@ -865,9 +870,55 @@ read_ascii_col(
 
 
 static int
+is_comment_or_blank_line(struct PyRecfileObject *self)
+{
+    int status = 0;
+    char c = 0;
+
+    int start = ftell(self->fptr);
+
+    c = fgetc(self->fptr);
+    while (c == ' ' || c == '\t') {
+        c= fgetc(self->fptr);
+    }
+
+    if (c == '\n' || c == EOF)
+    {
+        status = 1;
+    }
+    else if (self->comment_char != NULL)
+    {
+        if (c == self->comment_char[0])
+        {
+            status = 1;
+        }
+    }
+    
+    fseek(self->fptr, start, SEEK_SET);
+
+    return status;
+}
+
+
+static int
 read_ascii_row(struct PyRecfileObject* self, char* ptr, int skip) {
     int status=1;
     npy_intp col=0;
+
+    /*while (is_comment_or_blank_line(self) || feof(self->fptr))
+    {
+        // skip to next line
+        char c = fgetc(self->fptr);
+        while (c != '\n' && c != EOF) {
+            c = fgetc(self->fptr);
+        }
+
+        if (c == EOF)
+        {
+            return 0;
+        }
+    }*/
+
     for (col=0; col<self->ncols; col++) {
         status=read_ascii_col(self, col, ptr, skip);
         if (status != 1) {

@@ -723,7 +723,10 @@ def loadtxt(fname, dtype=float, comments='#', delimiter=None,
 
     def split_line(line):
         """Chop off comments, strip, and split at delimiter."""
-        line = asbytes(line).split(comments)[0].strip(asbytes('\r\n'))
+        line = asbytes(line)
+        if comments is not None and comments is not '':
+            line = line.split(comments)[0]
+        line = line.strip(asbytes('\r\n'))
         if line:
             return line.split(delimiter)
         else:
@@ -766,7 +769,7 @@ def loadtxt(fname, dtype=float, comments='#', delimiter=None,
         if delimiter is None:
             delimiter = ' '
 
-        rec = np.recfile.Recfile(fh, dtype=recfile_dtype, delim=delimiter, converters=converters, var_strings=True)
+        rec = np.recfile.Recfile(fh, dtype=recfile_dtype, delim=delimiter, converters=converters, comment_char=comments, var_strings=True)
 
         if usecols:
             # read subset of columns            
