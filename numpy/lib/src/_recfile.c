@@ -887,14 +887,17 @@ is_comment_or_blank_line(struct PyRecfileObject *self)
     int start = ftell(self->fptr);
 
     c = fgetc(self->fptr);
+
     if (c == EOF) {
         return 0;
     }
 
+    // consume leading whitespace
     while (c == ' ' || c == '\t') {
         c= fgetc(self->fptr);
     }
 
+    // check for newline or comment
     if (c == '\n' || c == EOF) {
         status = 1;
     }
@@ -919,7 +922,6 @@ read_ascii_row(struct PyRecfileObject* self, char* ptr, int skip) {
         while (c != '\n' && c != EOF) {
             c = fgetc(self->fptr);
         }
-
     }
 
     for (col=0; col<self->ncols; col++) {
