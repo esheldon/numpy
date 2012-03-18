@@ -887,8 +887,7 @@ is_comment_or_blank_line(struct PyRecfileObject *self)
     int start = ftell(self->fptr);
 
     c = fgetc(self->fptr);
-    if (c == EOF)
-    {
+    if (c == EOF) {
         return 0;
     }
 
@@ -896,12 +895,10 @@ is_comment_or_blank_line(struct PyRecfileObject *self)
         c= fgetc(self->fptr);
     }
 
-    if (c == '\n' || c == EOF)
-    {
+    if (c == '\n' || c == EOF) {
         status = 1;
     }
-    else if (c == self->comment_char[0])
-    {
+    else if (c == self->comment_char[0]) {
        status = 1;
     }
 
@@ -916,18 +913,13 @@ read_ascii_row(struct PyRecfileObject* self, char* ptr, int skip) {
     int status=1;
     npy_intp col=0;
 
-    while (is_comment_or_blank_line(self))
-    {
+    while (is_comment_or_blank_line(self)) {
         // skip to next line
         char c = fgetc(self->fptr);
         while (c != '\n' && c != EOF) {
             c = fgetc(self->fptr);
         }
 
-        if (c == EOF)
-        {
-            return 0;
-        }
     }
 
     for (col=0; col<self->ncols; col++) {
