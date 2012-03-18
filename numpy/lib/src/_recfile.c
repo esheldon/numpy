@@ -833,43 +833,9 @@ read_ascii_col_element(struct PyRecfileObject* self,
 
         // our scan formats will consume the delimiter when it is not a space,
         // but if it is a space we have to consume it manually
-        //if (self->delim_is_space) {
-        //    fgetc(self->fptr);
-        //}
-        char c;
-
-        // consume whitespace
-        c = fgetc(self->fptr);
-        while (c == ' ' || c == '\t')
-        {
-            c = fgetc(self->fptr);
+        if (self->delim_is_space) {
+            fgetc(self->fptr);
         }
-        fseek(self->fptr, -1, SEEK_CUR);
-
-        c = fgetc(self->fptr);
-        // check for comment
-        if (c == self->comment_char[0])
-        {
-            while (c != '\n')
-            {
-                c = fgetc(self->fptr);
-            }
-            fseek(self->fptr, -1, SEEK_CUR);
-        }
-        // check for newline
-        else if (c == '\n')
-        {
-            // if newline, back up so we can check for newline later
-            fseek(self->fptr, -1, SEEK_CUR);
-        }
-        // check for delimiter
-        else if (c != self->delim[0] && !self->delim_is_space)
-        {
-           printf("ERROR: could not read delimiter or newline\n");
-        }
-
-        if (c != '\n' && self->delim_is_space)
-            fseek(self->fptr, -1, SEEK_CUR);
     }
     return status;
 }

@@ -697,12 +697,10 @@ class Recfile(_recfile.Recfile):
 
         # if delim and not whitespace, we need to add
         # the delimiter to the scan format
-        #if len(self.delim) > 0:
-            #if self.delim[0] != " ":
-                #for d in allscanf:
-                    #allscanf[d] += " "+self.delim
-        #for d in allscanf:
-        #    allscanf[d] += " "
+        if len(self.delim) > 0:
+            if self.delim[0] != " ":
+                for d in allscanf:
+                    allscanf[d] += " "+self.delim
 
         self.allscanf=allscanf
         self.allprintf=allprintf
