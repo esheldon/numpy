@@ -564,7 +564,7 @@ next_var_string_length(struct PyRecfileObject* self)
     int status = 0;
     char cprev = 0;
     char c = fgetc(self->fptr);
-    while ( (c != self->delim[0] || cprev == '\\') && c != '\n') {
+    while ( (c != self->delim[0] || cprev == '\\') && c != '\n' && c != self->comment_char[0]) {
         if (c == EOF) {
             PyErr_Format(PyExc_IOError, "Hit EOF looking for next variable length string\n");
             status=0;
@@ -618,7 +618,7 @@ read_var_string(struct PyRecfileObject* self,
     // if comment is found, consume rest of line
     if (c == self->comment_char[0])
     {
-       while (c != '\n')
+       while (c != '\n' && c != EOF)
        {
           c = fgetc(self->fptr);
        }
@@ -887,6 +887,11 @@ is_comment_or_blank_line(struct PyRecfileObject *self)
     int start = ftell(self->fptr);
 
     c = fgetc(self->fptr);
+    if (c == EOF)
+    {
+        return 0;
+    }
+
     while (c == ' ' || c == '\t') {
         c= fgetc(self->fptr);
     }
@@ -911,7 +916,7 @@ read_ascii_row(struct PyRecfileObject* self, char* ptr, int skip) {
     int status=1;
     npy_intp col=0;
 
-    while (is_comment_or_blank_line(self) || feof(self->fptr))
+    while (is_comment_or_blank_line(self))
     {
         // skip to next line
         char c = fgetc(self->fptr);
