@@ -594,7 +594,7 @@ read_var_string(struct PyRecfileObject* self,
     // up to nbytes worth of data in buffer.
 
     c = fgetc(self->fptr);
-    while ( (c != self->delim[0] || cprev == '\\') && c != '\n') {
+    while ( (c != self->delim[0] || cprev == '\\') && c != '\n' && c != self->comment_char[0]) {
         if (c == EOF) {
             PyErr_Format(PyExc_IOError, "Hit EOF extracting variable length string\n");
             status=0;
@@ -613,6 +613,15 @@ read_var_string(struct PyRecfileObject* self,
         }
         cprev=c;
         c = fgetc(self->fptr);
+    }
+
+    // if comment is found, consume rest of line
+    if (c == self->comment_char[0])
+    {
+       while (c != '\n')
+       {
+          c = fgetc(self->fptr);
+       }
     }
 
     return status;
@@ -886,14 +895,11 @@ is_comment_or_blank_line(struct PyRecfileObject *self)
     {
         status = 1;
     }
-    else if (self->comment_char != NULL)
+    else if (c == self->comment_char[0])
     {
-        if (c == self->comment_char[0])
-        {
-            status = 1;
-        }
+       status = 1;
     }
-    
+
     fseek(self->fptr, start, SEEK_SET);
 
     return status;
