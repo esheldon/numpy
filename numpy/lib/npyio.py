@@ -610,7 +610,6 @@ def _getconv(dtype):
         return str
 
 
-
 def loadtxt(fname, dtype=float, comments='#', delimiter=None,
             converters=None, skiprows=0, usecols=None, unpack=False,
             ndmin=0):
@@ -716,155 +715,117 @@ def loadtxt(fname, dtype=float, comments='#', delimiter=None,
                 import bz2
                 fh = iter(bz2.BZ2File(fname))
             else:
-                fh = iter(open(fname, 'U'))
+                fh = iter(open(fname, 'r'))
         else:
             fh = iter(fname)
     except TypeError:
         raise ValueError('fname must be a string, file handle, or generator')
-    X = []
-
-    def flatten_dtype(dt):
-        """Unpack a structured data-type, and produce re-packing info."""
-        if dt.names is None:
-            # If the dtype is flattened, return.
-            # If the dtype has a shape, the dtype occurs
-            # in the list more than once.
-            shape = dt.shape
-            if len(shape) == 0:
-                return ([dt.base], None)
-            else:
-                packing = [(shape[-1], list)]
-                if len(shape) > 1:
-                    for dim in dt.shape[-2::-1]:
-                        packing = [(dim*packing[0][0], packing*dim)]
-                return ([dt.base] * int(np.prod(dt.shape)), packing)
-        else:
-            types = []
-            packing = []
-            for field in dt.names:
-                tp, bytes = dt.fields[field]
-                flat_dt, flat_packing = flatten_dtype(tp)
-                types.extend(flat_dt)
-                # Avoid extra nesting for subarrays
-                if len(tp.shape) > 0:
-                    packing.extend(flat_packing)
-                else:
-                    packing.append((len(flat_dt), flat_packing))
-            return (types, packing)
-
-    def pack_items(items, packing):
-        """Pack items into nested lists based on re-packing info."""
-        if packing == None:
-            return items[0]
-        elif packing is tuple:
-            return tuple(items)
-        elif packing is list:
-            return list(items)
-        else:
-            start = 0
-            ret = []
-            for length, subpacking in packing:
-                ret.append(pack_items(items[start:start+length], subpacking))
-                start += length
-            return tuple(ret)
 
     def split_line(line):
         """Chop off comments, strip, and split at delimiter."""
-        line = asbytes(line).split(comments)[0].strip(asbytes('\r\n'))
+        line = asbytes(line)
+        if comments is not None and comments is not '':
+            line = line.split(comments)[0]
+        line = line.strip(asbytes('\r\n'))
         if line:
             return line.split(delimiter)
         else:
             return []
 
-    try:
-        # Make sure we're dealing with a proper dtype
-        dtype = np.dtype(dtype)
-        defconv = _getconv(dtype)
+    array = None
 
+    try:
         # Skip the first `skiprows` lines
         for i in xrange(skiprows):
-            fh.next()
+            fh.readline()
 
         # Read until we find a line with some values, and use
         # it to estimate the number of columns, N.
         first_vals = None
         try:
             while not first_vals:
-                first_line = fh.next()
+                prev_line = fh.tell()
+                first_line= fh.readline()
                 first_vals = split_line(first_line)
+            fh.seek(prev_line)
         except StopIteration:
             # End of lines reached
             first_line = ''
             first_vals = []
             warnings.warn('loadtxt: Empty input file: "%s"' % fname)
-        N = len(usecols or first_vals)
 
-        dtype_types, packing = flatten_dtype(dtype)
-        if len(dtype_types) > 1:
-            # We're dealing with a structured array, each field of
-            # the dtype matches a column
-            converters = [_getconv(dt) for dt in dtype_types]
+        num_cols = len(first_vals)
+
+        # Make sure we're dealing with a proper dtype
+        dtype = np.dtype(dtype)
+
+        # Recfile class only understands record arrays, so
+        # create record array from array scalar
+        if dtype.names is None:
+            recfile_dtype = np.dtype(dtype.descr * num_cols)
         else:
-            # All fields have the same dtype
-            converters = [defconv for i in xrange(N)]
-            if N > 1:
-                packing = [(N, tuple)]
+            recfile_dtype = dtype
 
-        # By preference, use the converters specified by the user
-        for i, conv in (user_converters or {}).iteritems():
-            if usecols:
-                try:
-                    i = usecols.index(i)
-                except ValueError:
-                    # Unused converter specified
-                    continue
-            converters[i] = conv
+        if delimiter is None:
+            delimiter = ' '
 
-        # Parse each line, including the first
-        for i, line in enumerate(itertools.chain([first_line], fh)):
-            vals = split_line(line)
-            if len(vals) == 0:
-                continue
+        rec = np.recfile.Recfile(fh, dtype=recfile_dtype, delim=delimiter, converters=converters, comment_char=comments, var_strings=True)
+
+        if usecols:
+            # read subset of columns            
+            cols = []
+            col_names = recfile_dtype.names
+            for i in usecols:
+                cols.append(col_names[i])
+            array = rec[cols][:]
+        else:
+            # read all columns
+            array = rec[:]
+
+        # Read lines of file as record arrays. If scalar dtype was specified,
+        # reshape array as 2d array of scalars.
+        if dtype.names is None:
+            num_rows = array.size
+            array.dtype = dtype
             if usecols:
-                vals = [vals[i] for i in usecols]
-            # Convert each value according to its column and store
-            items = [conv(val) for (conv, val) in zip(converters, vals)]
-            # Then pack it according to the dtype's nesting
-            items = pack_items(items, packing)
-            X.append(items)
+                array.shape = (num_rows, len(usecols))
+            else:
+                array.shape = (num_rows, num_cols)
+ 
     finally:
         if fown:
             fh.close()
 
-    X = np.array(X, dtype)
     # Multicolumn data are returned with shape (1, N, M), i.e.
     # (1, 1, M) for a single row - remove the singleton dimension there
-    if X.ndim == 3 and X.shape[:2] == (1, 1):
-        X.shape = (1, -1)
+    if array.ndim == 3 and array.shape[:2] == (1, 1):
+        array.shape = (1, -1)
 
     # Verify that the array has at least dimensions `ndmin`.
     # Check correctness of the values of `ndmin`
     if not ndmin in [0, 1, 2]:
         raise ValueError('Illegal value of ndmin keyword: %s' % ndmin)
+
     # Tweak the size and shape of the arrays - remove extraneous dimensions
-    if X.ndim > ndmin:
-        X = np.squeeze(X)
+    if array.ndim > ndmin:
+        array = np.squeeze(array)
+
     # and ensure we have the minimum number of dimensions asked for
-    # - has to be in this order for the odd case ndmin=1, X.squeeze().ndim=0
-    if X.ndim < ndmin:
+    # - has to be in this order for the odd case ndmin=1, array.squeeze().ndim=0
+    if array.ndim < ndmin:
         if ndmin == 1:
-            X = np.atleast_1d(X)
+            array = np.atleast_1d(array)
         elif ndmin == 2:
-            X = np.atleast_2d(X).T
+            array = np.atleast_2d(array).T
 
     if unpack:
-        if len(dtype_types) > 1:
+        if dtype.names:
             # For structured arrays, return an array for each field.
-            return [X[field] for field in dtype.names]
+            return [array[field] for field in dtype.names]
         else:
-            return X.T
+            return array.T
     else:
-        return X
+        return array
 
 
 def savetxt(fname, X, fmt='%.18e', delimiter=' ', newline='\n', header='',

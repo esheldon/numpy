@@ -216,12 +216,21 @@ class Recfile(_recfile.Recfile):
         self.file_offset=keys.get('offset',None)
         self.string_newlines=keys.get('string_newlines',False)
 
-
+        converters = keys.get('converters',None)
+        self._set_converters(converters)
+        
         self.quote_char = keys.get('quote_char','')
         if self.quote_char is None:
             self.quote_char = ""
         if len(self.quote_char) > 1:
             raise ValueError("quote char must have len <= 1")
+
+        self.comment_char = keys.get('comment_char','')
+        if self.comment_char is None:
+            self.comment_char = ""
+        if len(self.comment_char) > 1:
+            raise ValueError("comment char must have len <= 1")
+
         self.var_strings = keys.get('var_strings',False)
 
         self.padnull = 1 if self.padnull else 0
@@ -261,7 +270,9 @@ class Recfile(_recfile.Recfile):
                                       self.padnull,
                                       self.ignorenull,
                                       self.quote_char,
-                                      self.var_strings)
+                                      self.comment_char,
+                                      self.var_strings,
+                                      self.converters)
         self._set_beginning_nrows(**keys)
 
     def write(self, data, **keys):
@@ -694,6 +705,31 @@ class Recfile(_recfile.Recfile):
         self.allscanf=allscanf
         self.allprintf=allprintf
 
+    def _set_converters(self, converters):
+        nf=len(self.dtype.names)
+        self.converters=numpy.empty(nf, dtype='object')
+        self.converters.fill(None)
+         
+        if converters is None:
+            return
+
+        # decorator for wrapping converter function
+        class DtypeDecorator(object):
+            def __init__(self, f, t):
+               self.f = f
+               self.t = t
+            def __call__(self, x):
+               return self.t(self.f(x))
+            def getTypeStr(self):
+               return type(self.f).__name__
+        
+        for col in converters:
+            name = self.dtype.names[col]
+            dt = self.dtype.fields[name][0]
+            # wrap converter function with function to convert output
+            # to proper dtype
+            dec = DtypeDecorator(converters[col], dt.type)
+            self.converters[col] = dec
 
     def _skipheader_lines(self, nlines):
         for i in xrange(nlines):
@@ -727,7 +763,7 @@ class Recfile(_recfile.Recfile):
         if self.delim != "":
             if self.fobj.tell() != self.file_offset:
                 self.fobj.seek(self.file_offset)
-            if self.string_newlines:
+            if self.string_newlines or self.comment_char is not '':
                 nrows=super(Recfile, self).count_ascii_rows()
             else:
                 nrows = 0
@@ -1118,7 +1154,7 @@ QQQQQQ"{d}25\n""".format(d=delim)
                 fobj.write(data)
                 fobj.close()
 
-                rw=Recfile(fname,'r',dtype=dt,delim=delim,quote_char='"',string_newlines=True)
+                rw=Recfile(fname,'r',dtype=dt,delim=delim)
                 d = rw[:]
                 rw.close()
 
