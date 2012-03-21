@@ -15,6 +15,7 @@
 #include <Python.h>
 #include "numpy/arrayobject.h" 
 
+
 struct PyRecfileObject {
     PyObject_HEAD
     // we will keep a reference to file_obj
@@ -40,12 +41,14 @@ struct PyRecfileObject {
     PyObject* offset_obj;
     PyObject* scan_formats_obj;
     PyObject* print_formats_obj;
+    PyObject* converters_obj;
 
     // jost pointers to the data sections
     npy_intp* typenums;
     npy_intp* elsize;
     npy_intp* nel;
     npy_intp* offset;
+    npy_intp* converters;
 
 
     // rowsize in bytes for binary
@@ -58,6 +61,9 @@ struct PyRecfileObject {
     // or empty ""  Quoted strings can be variable length.
     char* quote_char;
     int has_quoted_strings;
+
+    // char used to indicate comment
+    char* comment_char;
 
     // strings can be variable length but not quoted; in this case we only keep
     // as many as fit in the fixed width numpy array buffer.
@@ -145,6 +151,7 @@ set_defaults(struct PyRecfileObject* self)
     self->is_ascii=0;
 
     self->quote_char=NULL;
+    self->comment_char=NULL;
     self->has_quoted_strings=0;
     self->has_var_strings=0;
 
@@ -156,6 +163,7 @@ set_defaults(struct PyRecfileObject* self)
     self->rowsize=0;
     self->nel_obj=NULL;
     self->offset_obj=NULL;
+    self->converters_obj=NULL;
     self->offset=NULL;
     self->nel=NULL;
     self->nrows=0;
@@ -172,7 +180,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
 {
     set_defaults(self);
     if (!PyArg_ParseTuple(args, 
-                          (char*)"OsiOOOOOOiisi", 
+                          (char*)"OsiOOOOOOiissi|O", 
                           &self->file_obj, 
                           &self->delim, 
                           &self->is_ascii,
@@ -185,7 +193,9 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
                           &self->padnull,
                           &self->ignore_null, 
                           &self->quote_char,
-                          &self->has_var_strings)) {
+                          &self->comment_char,
+                          &self->has_var_strings,
+                          &self->converters_obj)) {
         return -1;
     }
 
@@ -222,6 +232,7 @@ PyRecfileObject_init(struct PyRecfileObject* self, PyObject *args, PyObject *kwd
     self->elsize=(npy_intp*) PyArray_DATA((PyArrayObject*)self->elsize_obj);
     self->nel=(npy_intp*) PyArray_DATA((PyArrayObject*)self->nel_obj);
     self->offset=(npy_intp*) PyArray_DATA((PyArrayObject*)self->offset_obj);
+    self->converters=(npy_intp*) PyArray_DATA((PyArrayObject*)self->converters_obj);
 
     if (!set_rowsize_and_buffer(self)) {
         return -1;
@@ -481,11 +492,48 @@ read_bytes(struct PyRecfileObject* self, npy_intp nbytes, char* buffer)
     return status;
 }
 
+
+static int
+convert_value(struct PyRecfileObject* self, npy_intp col, const char *source, Py_ssize_t len, char *buffer)
+{
+   int status = 1;
+   // Create string object for value to pass to user defined python function
+   PyObject *sourceStr = PyString_FromStringAndSize(source, len);
+
+   // Call user provided converter function
+   PyObject *result = PyObject_CallFunction(self->converters[col], "S", sourceStr);
+   if (result == 0) {
+      PyObject *typeStr = PyObject_CallMethod(self->converters[col], "getTypeStr", NULL);
+      PyErr_Format(PyExc_TypeError, "%s object is not callable", PyString_AsString(typeStr));
+      Py_DECREF(typeStr);
+      return 0;
+   }
+   Py_DECREF(sourceStr);
+
+   // Output from converter function was converted to proper dtype.
+   // Store value in array.
+   PyArray_Descr *descr =  PyArray_DescrFromScalar(result);
+   if (PyTypeNum_ISEXTENDED(descr->type_num)) {
+      void *dataPtr = 0;
+      PyArray_ScalarAsCtype(result, &dataPtr);
+      if (dataPtr > 0) {
+         memcpy(buffer, dataPtr, self->elsize[col]);
+      }
+   }
+   else {
+      PyArray_ScalarAsCtype(result, buffer);
+   }
+   Py_DECREF(result);
+
+   return status;
+}
+
 static int
 scan_number(struct PyRecfileObject* self, npy_intp col, char* buffer) {
     int status=1;
     int ret=0;
     char* fmt=NULL;
+
     fmt = PyArray_GETPTR1((PyArrayObject*)self->scan_formats_obj, col);
 
     ret = fscanf(self->fptr, fmt, buffer);
@@ -507,6 +555,31 @@ scan_number(struct PyRecfileObject* self, npy_intp col, char* buffer) {
  * Note because the row,column could be a var string and the user might not end
  */
 
+static int
+next_var_string_length(struct PyRecfileObject* self)
+{
+    int start = ftell(self->fptr);
+    int len = 0;
+
+    int status = 0;
+    char cprev = 0;
+    char c = fgetc(self->fptr);
+    while ( (c != self->delim[0] || cprev == '\\') && c != '\n' && c != self->comment_char[0]) {
+        if (c == EOF) {
+            PyErr_Format(PyExc_IOError, "Hit EOF looking for next variable length string\n");
+            status=0;
+            break;
+        }
+
+        len++;
+        cprev = c;
+        c = fgetc(self->fptr);
+    }
+
+    fseek(self->fptr, start, SEEK_SET);
+    return len;
+}
+
 static int 
 read_var_string(struct PyRecfileObject* self,
                    npy_intp nbytes, 
@@ -521,7 +594,7 @@ read_var_string(struct PyRecfileObject* self,
     // up to nbytes worth of data in buffer.
 
     c = fgetc(self->fptr);
-    while ( (c != self->delim[0] || cprev == '\\') && c != '\n') {
+    while ( (c != self->delim[0] || cprev == '\\') && c != '\n' && c != self->comment_char[0]) {
         if (c == EOF) {
             PyErr_Format(PyExc_IOError, "Hit EOF extracting variable length string\n");
             status=0;
@@ -542,7 +615,65 @@ read_var_string(struct PyRecfileObject* self,
         c = fgetc(self->fptr);
     }
 
+    // if comment is found, consume rest of line
+    if (c == self->comment_char[0])
+    {
+       while (c != '\n' && c != EOF)
+       {
+          c = fgetc(self->fptr);
+       }
+    }
+
     return status;
+}
+
+
+static int 
+next_quoted_string_length(struct PyRecfileObject* self)
+{
+    int status = 1;
+    npy_intp nread=0, istore=0;
+    char c=0, cprev=0;
+    int len=0;
+
+    int start = ftell(self->fptr);
+
+    // read until we find a non-whitespace character
+    c = fgetc(self->fptr); nread++;
+    while (c == ' ' || c == '\t') {
+        if (c == EOF) {
+            PyErr_Format(PyExc_IOError, "Hit EOF extracting quoted string\n");
+            return 0;
+        }
+        c = fgetc(self->fptr); nread++;
+    }
+
+    if (c != self->quote_char[0]) {
+        // quote char not found, treat as a variable length string
+        // rewind before we started looking for quote
+        fseeko(self->fptr, -nread, SEEK_CUR);
+        //return read_var_string(self, nbytes, buffer);
+        return next_var_string_length(self);
+    }
+
+    // read until we find the quote character, but only store
+    // up to nbytes worth of data in buffer.  Allow escaped
+    // quote characters using forward slash
+
+    c = fgetc(self->fptr);
+    while (c != self->quote_char[0] || cprev == '\\') {
+        if (c == EOF) {
+            PyErr_Format(PyExc_IOError, "Hit EOF extracting quoted string\n");
+            return 0;
+        }
+
+        len++;
+        cprev=c;
+        c = fgetc(self->fptr);
+    }
+
+    fseek(self->fptr, start, SEEK_SET);
+    return len;
 }
 
 
@@ -652,8 +783,45 @@ read_ascii_col_element(struct PyRecfileObject* self,
 {
     int status=1;
     npy_intp typenum=0;
+    PyObject *converter=0;
+
     typenum=self->typenums[col];
-    if (NPY_STRING == typenum) {
+    converter=self->converters[col];
+
+    if (converter != Py_None) {
+        if (self->has_quoted_strings) {
+            int len = next_quoted_string_length(self);
+            char *temp = calloc(len, 1);
+            status = read_quoted_string(self, len, temp);
+            status = convert_value(self, col, temp, len, buffer);
+            free(temp);
+        }
+        // Since we're using a user defined function to convert
+        // string to dtype instead of fscanf, treat string as
+        // variable length if converting to non string dtype.
+        else if (self->has_var_strings || NPY_STRING != typenum) {
+            int len = next_var_string_length(self);
+            char *temp = calloc(len, 1);
+            status = read_var_string(self, len, temp);
+            status = convert_value(self, col, temp, len, buffer);
+            free(temp);
+        }
+        else {
+            int len = self->elsize[col];
+            char *temp = calloc(len, 1);
+            status = read_bytes(self, len, temp);
+            status = convert_value(self, col, temp, len, buffer);
+            free(temp);
+
+            // consume delimiter/newline
+            char c = fgetc(self->fptr);
+            if (c != self->delim[0] && c != '\n') {
+                fprintf(stderr,"col %ld tried to read delim '%s' or newline, but got '%c'\n", 
+                col, self->delim,c);
+            }
+        }
+    }
+    else if (NPY_STRING == typenum) {
         if (self->has_quoted_strings) {
             status = read_quoted_string(self, self->elsize[col], buffer);
         } else if (self->has_var_strings) {
@@ -671,6 +839,7 @@ read_ascii_col_element(struct PyRecfileObject* self,
         }
     } else {
         status = scan_number(self, col, buffer);
+
         // our scan formats will consume the delimiter when it is not a space,
         // but if it is a space we have to consume it manually
         if (self->delim_is_space) {
@@ -710,9 +879,51 @@ read_ascii_col(
 
 
 static int
+is_comment_or_blank_line(struct PyRecfileObject *self)
+{
+    int status = 0;
+    char c = 0;
+
+    int start = ftell(self->fptr);
+
+    c = fgetc(self->fptr);
+
+    if (c == EOF) {
+        return 0;
+    }
+
+    // consume leading whitespace
+    while (c == ' ' || c == '\t') {
+        c= fgetc(self->fptr);
+    }
+
+    // check for newline or comment
+    if (c == '\n' || c == EOF) {
+        status = 1;
+    }
+    else if (c == self->comment_char[0]) {
+       status = 1;
+    }
+
+    fseek(self->fptr, start, SEEK_SET);
+
+    return status;
+}
+
+
+static int
 read_ascii_row(struct PyRecfileObject* self, char* ptr, int skip) {
     int status=1;
     npy_intp col=0;
+
+    while (is_comment_or_blank_line(self)) {
+        // skip to next line
+        char c = fgetc(self->fptr);
+        while (c != '\n' && c != EOF) {
+            c = fgetc(self->fptr);
+        }
+    }
+
     for (col=0; col<self->ncols; col++) {
         status=read_ascii_col(self, col, ptr, skip);
         if (status != 1) {
